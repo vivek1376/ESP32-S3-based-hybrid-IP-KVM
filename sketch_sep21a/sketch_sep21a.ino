@@ -9,38 +9,36 @@ const char* WIFI_SSID = "SpectrumSetup-F7-II";
 const char* WIFI_PASS = "hotelquaint425";
 const uint16_t UDP_PORT = 4210;
 
-#define LED_PIN_A 48
-#define LED_PIN_B 47
+// Confirmed on your N16R8 schematic (Page 4): WS2812 data-in is wired to GPIO48
+#define LED_PIN 48
 
-// Packet Type Opcodes
-#define PKT_MOUSE_MOVE   0x01
+// Packet Opcodes
 #define PKT_MOUSE_BTN    0x02
 #define PKT_KEY_EVENT    0x03
+#define PKT_MOUSE_ABS    0x04
 #define PKT_RELEASE_ALL  0xFF
 
 USBHIDKeyboard Keyboard;
-USBHIDMouse Mouse;
+USBHIDAbsoluteMouse AbsMouse; // Uses 16-bit [0..32767] absolute HID coordinates
 WiFiUDP udp;
 
 uint8_t buf[16];
 
-void setLed(uint8_t r, uint8_t g, uint8_t b) {
-  rgbLedWrite(LED_PIN_A, r, g, b);
-  // rgbLedWrite(LED_PIN_B, r, g, b);
+inline void setLed(uint8_t r, uint8_t g, uint8_t b) {
+  rgbLedWrite(LED_PIN, r, g, b);
 }
 
 void setup() {
   Serial.begin(115200);
-  setLed(30, 15, 0); // Orange during initialization
+  setLed(30, 15, 0); // Orange: Booting
 
-  // 1. Initialize TinyUSB HID Composite Device on GPIO19 (D-) & GPIO20 (D+)
+  // Initialize Composite USB HID (Keyboard + Absolute Digitizer Mouse)
   Keyboard.begin();
-  Mouse.begin();
+  AbsMouse.begin();
   USB.begin();
 
-  // 2. Initialize Wi-Fi in low-latency mode
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false); // Keep radio awake for sub-5ms packet latency
+  WiFi.setSleep(false); // Low-latency mode: disable RF sleep between DTIM beacons
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
   Serial.print("Connecting to Wi-Fi");
@@ -49,15 +47,16 @@ void setup() {
     Serial.print(".");
   }
 
-  Serial.println("\n==========================================");
-  Serial.println("ESP32-S3 USB-OTG HID KVM Bridge Ready!");
+  Serial.println("\n================================================");
+  Serial.println("ESP32-S3 N16R8 Seamless Absolute HID KVM Ready!");
+  Serial.printf("PSRAM Size   : %u bytes\n", ESP.getPsramSize());
   Serial.print("Listening IP : ");
   Serial.println(WiFi.localIP());
   Serial.printf("UDP Port     : %u\n", UDP_PORT);
-  Serial.println("==========================================");
+  Serial.println("================================================");
 
   udp.begin(UDP_PORT);
-  setLed(0, 20, 0); // Solid Green = Ready
+  setLed(0, 20, 0); // Green: Ready
 }
 
 void loop() {
@@ -70,26 +69,29 @@ void loop() {
   uint8_t pktType = buf[0];
 
   switch (pktType) {
-    case PKT_MOUSE_MOVE: {
-      if (len >= 5) {
-        int8_t dx    = (int8_t)buf[1];
-        int8_t dy    = (int8_t)buf[2];
-        int8_t wheel = (int8_t)buf[3];
-        int8_t pan   = (int8_t)buf[4];
-        Mouse.move(dx, dy, wheel, pan);
+    case PKT_MOUSE_ABS: {
+      // 7-byte packet: [0x04, x_lo, x_hi, y_lo, y_hi, wheel, pan]
+      if (len >= 7) {
+        // Xtensa LX7 is Little-Endian; reconstruct signed 16-bit integers
+        int16_t abs_x = (int16_t)((uint16_t)buf[1] | ((uint16_t)buf[2] << 8));
+        int16_t abs_y = (int16_t)((uint16_t)buf[3] | ((uint16_t)buf[4] << 8));
+        int8_t  wheel = (int8_t)buf[5];
+        int8_t  pan   = (int8_t)buf[6];
+
+        AbsMouse.move(abs_x, abs_y, wheel, pan);
       }
       break;
     }
 
     case PKT_MOUSE_BTN: {
       if (len >= 3) {
-        uint8_t btn    = buf[1]; // 1=Left, 2=Right, 4=Middle, 8=Back, 16=Forward
+        uint8_t btn    = buf[1]; // 1=Left, 2=Right, 4=Middle
         uint8_t action = buf[2]; // 1=Press, 0=Release
         if (action == 1) {
-          Mouse.press(btn);
-          setLed(0, 0, 40); // Flash Blue on click
+          AbsMouse.press(btn);
+          setLed(0, 0, 40); // Flash Blue on mouse button down
         } else {
-          Mouse.release(btn);
+          AbsMouse.release(btn);
           setLed(0, 20, 0);
         }
       }
@@ -99,10 +101,10 @@ void loop() {
     case PKT_KEY_EVENT: {
       if (len >= 3) {
         uint8_t hidKeycode = buf[1];
-        uint8_t action     = buf[2]; // 1=Press, 0=Release
+        uint8_t action     = buf[2];
         if (action == 1) {
           Keyboard.pressRaw(hidKeycode);
-          setLed(40, 0, 40); // Flash Purple on keypress
+          setLed(40, 0, 40); // Flash Purple on key down
         } else {
           Keyboard.releaseRaw(hidKeycode);
           setLed(0, 20, 0);
@@ -113,9 +115,8 @@ void loop() {
 
     case PKT_RELEASE_ALL: {
       Keyboard.releaseAll();
-      Mouse.release(MOUSE_ALL);
+      AbsMouse.release(MOUSE_ALL);
       setLed(0, 20, 0);
-      Serial.println(" Panic/Unfocus: Released all keys and mouse buttons.");
       break;
     }
   }
