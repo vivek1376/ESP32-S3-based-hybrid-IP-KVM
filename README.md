@@ -83,7 +83,7 @@ All packets are transmitted over UDP in **Little-Endian** byte order, prefixed b
 
 1. Install **Arduino IDE 2.x** and add the official Espressif Boards Manager URL in **File > Preferences**:
    ```text
-   [https://espressif.github.io/arduino-esp32/package_esp32_index.json](https://espressif.github.io/arduino-esp32/package_esp32_index.json)
+   https://espressif.github.io/arduino-esp32/package_esp32_index.json
    ```
 2. Install the **`esp32` by Espressif Systems** package (v3.x+) via Boards Manager.
 3. Connect the ESP32-S3's **`COM`** port to your PC and configure the **Tools** menu:
