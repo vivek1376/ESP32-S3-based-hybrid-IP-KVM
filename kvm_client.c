@@ -9,143 +9,27 @@
  *  - SDL_Scancode maps 1:1 to USB HID Usage Page 0x07 Keycodes!
  *
  * Compile:
- *   gcc -O3 kvm_client.c -o kvm_client $(sdl2-config --cflags --libs) -lpthread
+ *   make
+ *   gcc -O3 kvm_client.c kvm_video.c kvm_hid.c overlay.c -o kvm_client $(sdl2-config --cflags --libs) -lpthread -lm
  *
  * Run:
  *   ./kvm_client 192.168.1.150 /dev/video0
  */
 
+#include "kvm_config.h"
+#include "kvm_hid.h"
+#include "kvm_video.h"
+#include "overlay.h"
+
 #include <SDL2/SDL.h>
-#include <arpa/inet.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#define WIN_W 1920
-#define WIN_H 1080
-#define FRAME_BYTES (WIN_W * WIN_H * 2) // YUYV422 = 2 bytes per pixel (4,147,200 bytes)
-#define HID_MAX 32767
-#define UDP_PORT 4210
-
-// ESP32-S3 Wire Protocol Opcodes
-#define PKT_MOUSE_BTN   0x02
-#define PKT_KEY_EVENT   0x03
-#define PKT_MOUSE_ABS   0x04
-#define PKT_RELEASE_ALL 0xFF
-
-// TinyUSB Mouse Button Masks
-#define HID_BTN_LEFT    0x01
-#define HID_BTN_RIGHT   0x02
-#define HID_BTN_MIDDLE  0x04
-#define HID_BTN_BACK    0x08
-#define HID_BTN_FORWARD 0x10
-
-// Shared video state between V4L2/FFmpeg reader thread and SDL2 render thread
-static uint8_t frame_buf[FRAME_BYTES];
-static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
-static volatile bool new_frame_ready = false;
-static volatile bool app_running = true;
-static const char *video_dev = "/dev/video0";
-
-// Background thread: reads raw 1920x1080 yuyv422 frames from /dev/video0 via ffmpeg pipe
-void *video_capture_thread(void *arg) {
-    (void)arg;
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd),
-             "ffmpeg -loglevel quiet -fflags nobuffer -flags low_delay "
-             "-f v4l2 -input_format yuyv422 -video_size %dx%d -i %s "
-             "-f rawvideo -pix_fmt yuyv422 -",
-             WIN_W, WIN_H, video_dev);
-
-    FILE *pipe = popen(cmd, "r");
-    if (!pipe) {
-        fprintf(stderr, "[ERROR] Failed to open ffmpeg capture pipe\n");
-        return NULL;
-    }
-
-    uint8_t *temp_buf = malloc(FRAME_BYTES);
-    if (!temp_buf) {
-        pclose(pipe);
-        return NULL;
-    }
-
-    while (app_running) {
-        size_t total_read = 0;
-        while (total_read < FRAME_BYTES && app_running) {
-            size_t n = fread(temp_buf + total_read, 1, FRAME_BYTES - total_read, pipe);
-            if (n == 0) break;
-            total_read += n;
-        }
-        if (total_read == FRAME_BYTES) {
-            pthread_mutex_lock(&frame_mutex);
-            memcpy(frame_buf, temp_buf, FRAME_BYTES);
-            new_frame_ready = true;
-            pthread_mutex_unlock(&frame_mutex);
-        } else {
-            usleep(10000);
-        }
-    }
-
-    free(temp_buf);
-    pclose(pipe);
-    return NULL;
-}
-
-// Send absolute mouse coordinates + scroll wheel over UDP
-static inline void send_mouse_abs(int sock, struct sockaddr_in *addr, int x, int y, int8_t wheel, int8_t pan) {
-    if (x < 0) x = 0;
-    if (x >= WIN_W) x = WIN_W - 1;
-    if (y < 0) y = 0;
-    if (y >= WIN_H) y = WIN_H - 1;
-
-    int16_t hid_x = (int16_t)(((int64_t)x * HID_MAX) / (WIN_W - 1));
-    int16_t hid_y = (int16_t)(((int64_t)y * HID_MAX) / (WIN_H - 1));
-
-    uint8_t pkt[7];
-    pkt[0] = PKT_MOUSE_ABS;
-    pkt[1] = (uint8_t)(hid_x & 0xFF);
-    pkt[2] = (uint8_t)((hid_x >> 8) & 0xFF);
-    pkt[3] = (uint8_t)(hid_y & 0xFF);
-    pkt[4] = (uint8_t)((hid_y >> 8) & 0xFF);
-    pkt[5] = (uint8_t)wheel;
-    pkt[6] = (uint8_t)pan;
-
-    sendto(sock, pkt, sizeof(pkt), MSG_DONTWAIT, (struct sockaddr *)addr, sizeof(*addr));
-}
-
-static inline void send_mouse_btn(int sock, struct sockaddr_in *addr, uint8_t btn_mask, uint8_t pressed) {
-    uint8_t pkt[3] = {PKT_MOUSE_BTN, btn_mask, pressed};
-    sendto(sock, pkt, sizeof(pkt), MSG_DONTWAIT, (struct sockaddr *)addr, sizeof(*addr));
-}
-
-static inline void send_key_event(int sock, struct sockaddr_in *addr, uint8_t hid_code, uint8_t pressed) {
-    uint8_t pkt[3] = {PKT_KEY_EVENT, hid_code, pressed};
-    sendto(sock, pkt, sizeof(pkt), MSG_DONTWAIT, (struct sockaddr *)addr, sizeof(*addr));
-}
-
-static inline void send_release_all(int sock, struct sockaddr_in *addr) {
-    uint8_t pkt[1] = {PKT_RELEASE_ALL};
-    sendto(sock, pkt, sizeof(pkt), MSG_DONTWAIT, (struct sockaddr *)addr, sizeof(*addr));
-}
-
-static uint8_t sdl_btn_to_hid(uint8_t sdl_btn) {
-    switch (sdl_btn) {
-        case SDL_BUTTON_LEFT:   return HID_BTN_LEFT;
-        case SDL_BUTTON_RIGHT:  return HID_BTN_RIGHT;
-        case SDL_BUTTON_MIDDLE: return HID_BTN_MIDDLE;
-        case SDL_BUTTON_X1:     return HID_BTN_BACK;
-        case SDL_BUTTON_X2:     return HID_BTN_FORWARD;
-        default:                return 0;
-    }
-}
 
 static void update_title(SDL_Window *win, const char *ip, bool kb_grabbed) {
     char title[256];
+    const char *video_dev = kvm_video_get_device();
     if (kb_grabbed) {
         snprintf(title, sizeof(title),
                  "[KEYBOARD GRABBED - Ctrl+Esc to Detach] ESP32-S3 IP-KVM (%s) - %s",
@@ -160,15 +44,14 @@ static void update_title(SDL_Window *win, const char *ip, bool kb_grabbed) {
 
 int main(int argc, char *argv[]) {
     const char *esp_ip = (argc > 1) ? argv[1] : "192.168.1.150";
-    if (argc > 2) video_dev = argv[2];
+    if (argc > 2) kvm_video_set_device(argv[2]);
 
     // Setup non-blocking UDP socket
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    struct sockaddr_in esp_addr;
-    memset(&esp_addr, 0, sizeof(esp_addr));
-    esp_addr.sin_family = AF_INET;
-    esp_addr.sin_port = htons(UDP_PORT);
-    inet_pton(AF_INET, esp_ip, &esp_addr.sin_addr);
+    KvmHid hid;
+    if (kvm_hid_init(&hid, esp_ip, UDP_PORT) != 0) {
+        fprintf(stderr, "[ERROR] Failed to initialize UDP socket\n");
+        return 1;
+    }
 
     // Crucial SDL2 Hints for X11 / Cinnamon:
     // 1. Allow grabbing the keyboard without confining the mouse cursor
@@ -178,6 +61,7 @@ int main(int argc, char *argv[]) {
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
+        kvm_hid_close(&hid);
         return 1;
     }
 
@@ -190,6 +74,7 @@ int main(int argc, char *argv[]) {
     );
 
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 
     // SDL_PIXELFORMAT_YUY2 accepts raw YUYV422 directly on the GPU!
     SDL_Texture *tex = SDL_CreateTexture(
@@ -200,6 +85,19 @@ int main(int argc, char *argv[]) {
     bool kb_grabbed = true;
     SDL_SetWindowKeyboardGrab(win, SDL_TRUE);
     update_title(win, esp_ip, kb_grabbed);
+
+    // Initialize [TODO-1] Feedforward Radial Overlay
+    OverlayState overlay;
+    overlay_init(&overlay);
+
+    int mouse_x = 0, mouse_y = 0;
+    bool cursor_in_window = (SDL_GetMouseFocus() == win);
+    if (cursor_in_window) {
+        SDL_GetMouseState(&mouse_x, &mouse_y);
+    }
+
+    uint64_t perf_freq = SDL_GetPerformanceFrequency();
+    uint64_t prev_counter = SDL_GetPerformanceCounter();
 
     // Launch V4L2 capture thread
     pthread_t cap_tid;
@@ -214,22 +112,39 @@ int main(int argc, char *argv[]) {
                     break;
 
                 case SDL_WINDOWEVENT:
-                    if (ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                    if (ev.window.event == SDL_WINDOWEVENT_ENTER) {
+                        int gx = 0, gy = 0, wx = 0, wy = 0;
+                        SDL_GetGlobalMouseState(&gx, &gy);
+                        SDL_GetWindowPosition(win, &wx, &wy);
+                        mouse_x = gx - wx;
+                        mouse_y = gy - wy;
+                        cursor_in_window = true;
+                    } else if (ev.window.event == SDL_WINDOWEVENT_LEAVE) {
+                        cursor_in_window = false;
+                    } else if (ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                         if (kb_grabbed) {
                             kb_grabbed = false;
                             SDL_SetWindowKeyboardGrab(win, SDL_FALSE);
                             update_title(win, esp_ip, kb_grabbed);
                         }
-                        send_release_all(sock, &esp_addr);
+                        send_release_all(&hid);
                     }
                     break;
 
                 // Seamless Absolute Mouse Motion (works whether keyboard is grabbed or not!)
                 case SDL_MOUSEMOTION:
-                    send_mouse_abs(sock, &esp_addr, ev.motion.x, ev.motion.y, 0, 0);
+                    mouse_x = ev.motion.x;
+                    mouse_y = ev.motion.y;
+                    cursor_in_window = (mouse_x >= 0 && mouse_x < WIN_W &&
+                                        mouse_y >= 0 && mouse_y < WIN_H);
+                    send_mouse_abs(&hid, ev.motion.x, ev.motion.y, 0, 0);
                     break;
 
                 case SDL_MOUSEBUTTONDOWN: {
+                    mouse_x = ev.button.x;
+                    mouse_y = ev.button.y;
+                    cursor_in_window = (mouse_x >= 0 && mouse_x < WIN_W &&
+                                        mouse_y >= 0 && mouse_y < WIN_H);
                     // If keyboard isn't grabbed yet, clicking inside the window grabs it
                     // AND still forwards the click seamlessly to the remote laptop!
                     if (!kb_grabbed) {
@@ -237,16 +152,20 @@ int main(int argc, char *argv[]) {
                         SDL_SetWindowKeyboardGrab(win, SDL_TRUE);
                         update_title(win, esp_ip, kb_grabbed);
                     }
-                    send_mouse_abs(sock, &esp_addr, ev.button.x, ev.button.y, 0, 0);
+                    send_mouse_abs(&hid, ev.button.x, ev.button.y, 0, 0);
                     uint8_t btn = sdl_btn_to_hid(ev.button.button);
-                    if (btn) send_mouse_btn(sock, &esp_addr, btn, 1);
+                    if (btn) send_mouse_btn(&hid, btn, 1);
                     break;
                 }
 
                 case SDL_MOUSEBUTTONUP: {
-                    send_mouse_abs(sock, &esp_addr, ev.button.x, ev.button.y, 0, 0);
+                    mouse_x = ev.button.x;
+                    mouse_y = ev.button.y;
+                    cursor_in_window = (mouse_x >= 0 && mouse_x < WIN_W &&
+                                        mouse_y >= 0 && mouse_y < WIN_H);
+                    send_mouse_abs(&hid, ev.button.x, ev.button.y, 0, 0);
                     uint8_t btn = sdl_btn_to_hid(ev.button.button);
-                    if (btn) send_mouse_btn(sock, &esp_addr, btn, 0);
+                    if (btn) send_mouse_btn(&hid, btn, 0);
                     break;
                 }
 
@@ -255,7 +174,7 @@ int main(int argc, char *argv[]) {
                     SDL_GetMouseState(&mx, &my);
                     int8_t wheel = (int8_t)ev.wheel.y;
                     int8_t pan   = (int8_t)ev.wheel.x;
-                    send_mouse_abs(sock, &esp_addr, mx, my, wheel, pan);
+                    send_mouse_abs(&hid, mx, my, wheel, pan);
                     break;
                 }
 
@@ -269,7 +188,7 @@ int main(int argc, char *argv[]) {
                     if (sc == SDL_SCANCODE_ESCAPE && (mod & KMOD_CTRL)) {
                         kb_grabbed = false;
                         SDL_SetWindowKeyboardGrab(win, SDL_FALSE);
-                        send_release_all(sock, &esp_addr);
+                        send_release_all(&hid);
                         update_title(win, esp_ip, kb_grabbed);
                         printf("[INFO] Ctrl+Esc pressed: Keyboard grab released back to Cinnamon.\n");
                         break;
@@ -277,7 +196,7 @@ int main(int argc, char *argv[]) {
 
                     // SDL_Scancode values (4..231) are identical to USB HID Usage Page 0x07!
                     if (sc >= 0x04 && sc <= 0xE7) {
-                        send_key_event(sock, &esp_addr, (uint8_t)sc, 1);
+                        send_key_event(&hid, (uint8_t)sc, 1);
                     }
                     break;
                 }
@@ -286,32 +205,38 @@ int main(int argc, char *argv[]) {
                     if (!kb_grabbed) break;
                     SDL_Scancode sc = ev.key.keysym.scancode;
                     if (sc >= 0x04 && sc <= 0xE7) {
-                        send_key_event(sock, &esp_addr, (uint8_t)sc, 0);
+                        send_key_event(&hid, (uint8_t)sc, 0);
                     }
                     break;
                 }
             }
         }
 
-        // Update GPU Texture if a fresh YUYV422 frame arrived from /dev/video0
-        if (new_frame_ready) {
-            pthread_mutex_lock(&frame_mutex);
-            SDL_UpdateTexture(tex, NULL, frame_buf, WIN_W * 2);
-            new_frame_ready = false;
-            pthread_mutex_unlock(&frame_mutex);
-        }
+        // Compute render frame delta time dt in seconds, clamped to [0.001f, 0.100f]
+        uint64_t now_counter = SDL_GetPerformanceCounter();
+        float dt = (float)(now_counter - prev_counter) / (float)perf_freq;
+        prev_counter = now_counter;
+        if (dt < 0.001f) dt = 0.001f;
+        if (dt > 0.100f) dt = 0.100f;
 
+        overlay_update(&overlay, mouse_x, mouse_y, cursor_in_window, dt);
+
+        // Update GPU Texture if a fresh YUYV422 frame arrived from /dev/video0
+        kvm_video_update_texture(tex);
+
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);
+        overlay_render(&overlay, ren);
         SDL_RenderPresent(ren);
     }
 
-    send_release_all(sock, &esp_addr);
+    send_release_all(&hid);
     SDL_SetWindowKeyboardGrab(win, SDL_FALSE);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
-    close(sock);
+    kvm_hid_close(&hid);
     return 0;
 }
