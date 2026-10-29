@@ -10,6 +10,7 @@
 
 #include <SDL2/SDL.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 // --- [TODO-1] Feedforward Radial Overlay Configuration ---
 #define OVERLAY_DIAMETER_RATIO  0.18f                       // 18% of window height (194.4 px)
@@ -60,12 +61,43 @@ typedef enum {
     OVERLAY_POPOUT
 } OverlayPhase;
 
+static inline const char *overlay_phase_name(OverlayPhase phase) {
+    switch (phase) {
+        case OVERLAY_DORMANT:    return "OVERLAY_DORMANT";
+        case OVERLAY_REELING_IN: return "OVERLAY_REELING_IN";
+        case OVERLAY_ENGAGEMENT: return "OVERLAY_ENGAGEMENT";
+        case OVERLAY_POPOUT:     return "OVERLAY_POPOUT";
+        default:                 return "UNKNOWN";
+    }
+}
+
+typedef struct {
+    float x_hat;
+    float y_hat;
+    float vx_hat;
+    float vy_hat;
+    float d;
+    float v_theta;
+    float v_r;
+    float omega_ptr;
+    float psi;
+    float ccw_drive;
+    float spring_open;
+    float du_dt;
+    float r_curr;
+    bool in_window;
+    bool in_quadrant_1;
+    bool singularity_triggered;
+    uint32_t singularity_count;
+} OverlayDiagnostics;
+
 typedef struct {
     OverlayPhase phase;
-    float u;                 // Compression state [0.0f, 1.0f]
-    float omega_vis;         // Visual CCW rotation speed (rad/s)
-    float theta_vis;         // Visual rotation angle (rad)
-    OneEuroFilter2D filter;  // 2D 1-Euro pointer position & velocity filter
+    float u;                  // Compression state [0.0f, 1.0f]
+    float omega_vis;          // Visual CCW rotation speed (rad/s)
+    float theta_vis;          // Visual rotation angle (rad)
+    OneEuroFilter2D filter;   // 2D 1-Euro pointer position & velocity filter
+    OverlayDiagnostics diag;  // Per-frame kinematic & control telemetry snapshot
 } OverlayState;
 
 void overlay_init(OverlayState *ov);
@@ -73,4 +105,3 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
 void overlay_render(const OverlayState *ov, SDL_Renderer *ren);
 
 #endif // OVERLAY_H
-

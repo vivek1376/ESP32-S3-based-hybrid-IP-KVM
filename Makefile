@@ -4,7 +4,7 @@ endif
 TARGET     := kvm_client
 BUILD_DIR  := build
 
-SRCS       := kvm_client.c kvm_video.c kvm_hid.c overlay.c
+SRCS       := kvm_client.c kvm_video.c kvm_hid.c overlay.c telemetry.c
 OBJS       := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 DEPS       := $(OBJS:.o=.d)
 

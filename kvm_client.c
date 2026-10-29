@@ -10,22 +10,40 @@
  *
  * Compile:
  *   make
- *   gcc -O3 kvm_client.c kvm_video.c kvm_hid.c overlay.c -o kvm_client $(sdl2-config --cflags --libs) -lpthread -lm
+ *   gcc -O3 kvm_client.c kvm_video.c kvm_hid.c overlay.c telemetry.c -o kvm_client $(sdl2-config --cflags --libs) -lpthread -lm
  *
  * Run:
- *   ./kvm_client 192.168.1.150 /dev/video0
+ *   ./kvm_client [esp_ip] [video_dev] [tty_device]
+ *   ./kvm_client 192.168.1.150 /dev/video0 --tty /dev/pts/3 --metrics overlay_metrics.bin
  */
 
 #include "kvm_config.h"
 #include "kvm_hid.h"
 #include "kvm_video.h"
 #include "overlay.h"
+#include "telemetry.h"
 
 #include <SDL2/SDL.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+
+static void print_usage(const char *prog) {
+    printf("Usage: %s [esp_ip] [video_dev] [tty_device] [options]\n"
+           "\n"
+           "Positional arguments (all optional):\n"
+           "  esp_ip                 ESP32-S3 target IP (default: 192.168.1.150)\n"
+           "  video_dev              V4L2 video capture device (default: /dev/video0)\n"
+           "  tty_device             Optional TTY for live in-place dashboard (e.g. /dev/pts/3)\n"
+           "\n"
+           "Options:\n"
+           "  -t, --tty <tty>        Target TTY for live in-place logging (e.g. /dev/pts/3, pts/3, 3)\n"
+           "  -m, --metrics <path>   Binary metrics output file (default: overlay_metrics.bin)\n"
+           "  -h, --help             Show this help message\n",
+           prog);
+}
 
 static void update_title(SDL_Window *win, const char *ip, bool kb_grabbed) {
     char title[256];
@@ -43,8 +61,37 @@ static void update_title(SDL_Window *win, const char *ip, bool kb_grabbed) {
 }
 
 int main(int argc, char *argv[]) {
-    const char *esp_ip = (argc > 1) ? argv[1] : "192.168.1.150";
-    if (argc > 2) kvm_video_set_device(argv[2]);
+    const char *esp_ip = "192.168.1.150";
+    const char *tty_arg = NULL;
+    const char *metrics_arg = TELEMETRY_DEFAULT_BIN_PATH;
+    int pos_idx = 0;
+
+    for (int i = 1; i < argc; ++i) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        } else if ((strcmp(arg, "-t") == 0 || strcmp(arg, "--tty") == 0) && i + 1 < argc) {
+            tty_arg = argv[++i];
+        } else if (strncmp(arg, "--tty=", 6) == 0) {
+            tty_arg = arg + 6;
+        } else if ((strcmp(arg, "-m") == 0 || strcmp(arg, "--metrics") == 0) && i + 1 < argc) {
+            metrics_arg = argv[++i];
+        } else if (strncmp(arg, "--metrics=", 10) == 0) {
+            metrics_arg = arg + 10;
+        } else if (arg[0] != '-') {
+            if (pos_idx == 0) {
+                esp_ip = arg;
+            } else if (pos_idx == 1) {
+                kvm_video_set_device(arg);
+            } else if (pos_idx == 2) {
+                tty_arg = arg;
+            }
+            pos_idx++;
+        } else {
+            fprintf(stderr, "[WARN] Ignoring unknown option: %s\n", arg);
+        }
+    }
 
     // Setup non-blocking UDP socket
     KvmHid hid;
@@ -86,9 +133,12 @@ int main(int argc, char *argv[]) {
     SDL_SetWindowKeyboardGrab(win, SDL_TRUE);
     update_title(win, esp_ip, kb_grabbed);
 
-    // Initialize [TODO-1] Feedforward Radial Overlay
+    // Initialize [TODO-1] Feedforward Radial Overlay & Live Telemetry
     OverlayState overlay;
     overlay_init(&overlay);
+
+    TelemetryState telemetry;
+    telemetry_init(&telemetry, tty_arg, metrics_arg, esp_ip, kvm_video_get_device());
 
     int mouse_x = 0, mouse_y = 0;
     bool cursor_in_window = (SDL_GetMouseFocus() == win);
@@ -97,7 +147,8 @@ int main(int argc, char *argv[]) {
     }
 
     uint64_t perf_freq = SDL_GetPerformanceFrequency();
-    uint64_t prev_counter = SDL_GetPerformanceCounter();
+    uint64_t start_counter = SDL_GetPerformanceCounter();
+    uint64_t prev_counter = start_counter;
 
     // Launch V4L2 capture thread
     pthread_t cap_tid;
@@ -105,6 +156,8 @@ int main(int argc, char *argv[]) {
 
     SDL_Event ev;
     while (app_running) {
+        float cur_elapsed = (float)(SDL_GetPerformanceCounter() - start_counter) / (float)perf_freq;
+
         while (SDL_PollEvent(&ev)) {
             switch (ev.type) {
                 case SDL_QUIT:
@@ -190,7 +243,8 @@ int main(int argc, char *argv[]) {
                         SDL_SetWindowKeyboardGrab(win, SDL_FALSE);
                         send_release_all(&hid);
                         update_title(win, esp_ip, kb_grabbed);
-                        printf("[INFO] Ctrl+Esc pressed: Keyboard grab released back to Cinnamon.\n");
+                        telemetry_log_event(&telemetry, cur_elapsed,
+                                            "INPUT : Ctrl+Esc -> Keyboard grab released to Cinnamon");
                         break;
                     }
 
@@ -212,14 +266,20 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Compute render frame delta time dt in seconds, clamped to [0.001f, 0.100f]
+        // Compute true raw frame delta time and clamped kinematic dt [0.001f, 0.100f]
         uint64_t now_counter = SDL_GetPerformanceCounter();
-        float dt = (float)(now_counter - prev_counter) / (float)perf_freq;
+        float raw_dt = (float)(now_counter - prev_counter) / (float)perf_freq;
+        float elapsed_sec = (float)(now_counter - start_counter) / (float)perf_freq;
         prev_counter = now_counter;
+
+        float dt = raw_dt;
         if (dt < 0.001f) dt = 0.001f;
         if (dt > 0.100f) dt = 0.100f;
 
         overlay_update(&overlay, mouse_x, mouse_y, cursor_in_window, dt);
+        telemetry_record_frame(&telemetry, elapsed_sec,
+                               raw_dt * 1000.0f, dt * 1000.0f,
+                               mouse_x, mouse_y, kb_grabbed, &overlay);
 
         // Update GPU Texture if a fresh YUYV422 frame arrived from /dev/video0
         kvm_video_update_texture(tex);
@@ -231,6 +291,7 @@ int main(int argc, char *argv[]) {
         SDL_RenderPresent(ren);
     }
 
+    telemetry_close(&telemetry);
     send_release_all(&hid);
     SDL_SetWindowKeyboardGrab(win, SDL_FALSE);
     SDL_DestroyTexture(tex);

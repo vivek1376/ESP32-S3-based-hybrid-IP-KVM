@@ -5,7 +5,6 @@
 #include "overlay.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <string.h>
 
 #ifndef M_PI
@@ -51,6 +50,7 @@ void overlay_init(OverlayState *ov) {
     ov->u = 0.0f;
     ov->omega_vis = 0.0f;
     ov->theta_vis = 0.0f;
+    ov->diag.r_curr = OVERLAY_R0;
     one_euro_2d_reset(&ov->filter);
     init_dot_geometry_tables();
 }
@@ -133,9 +133,18 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     float spin_alpha = dt / OVERLAY_SPIN_TAU;
     if (spin_alpha > 1.0f) spin_alpha = 1.0f;
 
+    float ccw_drive = 0.0f;
+    float spring_open = 0.0f;
+    float du_dt = 0.0f;
+    bool singularity_triggered = false;
+
     // Phase Kinematics & Control Law Update
     switch (ov->phase) {
         case OVERLAY_DORMANT:
+            if (ov->u > 0.0f) {
+                spring_open = OVERLAY_GAMMA_OPEN;
+                du_dt = -OVERLAY_GAMMA_OPEN;
+            }
             // Compression state u decays toward 0.0f
             ov->u = fmaxf(0.0f, ov->u - OVERLAY_GAMMA_OPEN * dt);
             // Visual rotation speed omega_vis decays exponentially toward 0.0f
@@ -145,6 +154,10 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
             break;
 
         case OVERLAY_REELING_IN:
+            if (ov->u > 0.0f) {
+                spring_open = OVERLAY_GAMMA_OPEN;
+                du_dt = -OVERLAY_GAMMA_OPEN;
+            }
             // Compression state u decays toward 0.0f
             ov->u = fmaxf(0.0f, ov->u - OVERLAY_GAMMA_OPEN * dt);
             // omega_vis accelerates exponentially toward OVERLAY_BASE_SPEED
@@ -155,10 +168,10 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
 
         case OVERLAY_ENGAGEMENT: {
             // Phase 3 Differential Winding & Non-Linear Spring Control Law
-            float ccw_drive   = OVERLAY_K_IN * psi * fmaxf(0.0f, omega_ptr - OVERLAY_OMEGA_DEADBAND);
-            float spring_open = OVERLAY_GAMMA_OPEN * (1.0f + OVERLAY_BETA_STIFF * ov->u);
-            float cw_unwind   = OVERLAY_K_CW * fmaxf(0.0f, -omega_ptr);
-            float du_dt       = ccw_drive - spring_open - cw_unwind;
+            ccw_drive        = OVERLAY_K_IN * psi * fmaxf(0.0f, omega_ptr - OVERLAY_OMEGA_DEADBAND);
+            spring_open      = OVERLAY_GAMMA_OPEN * (1.0f + OVERLAY_BETA_STIFF * ov->u);
+            float cw_unwind  = OVERLAY_K_CW * fmaxf(0.0f, -omega_ptr);
+            du_dt            = ccw_drive - spring_open - cw_unwind;
 
             ov->u += du_dt * dt;
             if (ov->u < 0.0f) ov->u = 0.0f;
@@ -168,10 +181,10 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
             ov->theta_vis -= ov->omega_vis * dt;
 
             // Singularity Trigger (u >= 1.0f)
-            // Temporary Subtask 2 checkpoint: log trigger and reset u = 0.0f for repeated testing
+            // Temporary Subtask 2 checkpoint: record trigger and reset u = 0.0f for repeated testing
             if (ov->u >= 1.0f) {
-                printf("[OVERLAY] Singularity triggered (u >= 1.0)\n");
-                fflush(stdout);
+                singularity_triggered = true;
+                ov->diag.singularity_count++;
                 ov->u = 0.0f;
             }
             break;
@@ -186,6 +199,27 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     if (ov->theta_vis > two_pi || ov->theta_vis < -two_pi) {
         ov->theta_vis = fmodf(ov->theta_vis, two_pi);
     }
+
+    float uc = fminf(fmaxf(ov->u, 0.0f), 1.0f);
+    float r_curr = OVERLAY_R0 * (1.0f - uc) + OVERLAY_R_MIN * uc;
+
+    // Store per-frame diagnostic snapshot for terminal & binary telemetry
+    ov->diag.x_hat = x_hat;
+    ov->diag.y_hat = y_hat;
+    ov->diag.vx_hat = vx_hat;
+    ov->diag.vy_hat = vy_hat;
+    ov->diag.d = d;
+    ov->diag.v_theta = v_theta;
+    ov->diag.v_r = v_r;
+    ov->diag.omega_ptr = omega_ptr;
+    ov->diag.psi = psi;
+    ov->diag.ccw_drive = ccw_drive;
+    ov->diag.spring_open = spring_open;
+    ov->diag.du_dt = du_dt;
+    ov->diag.r_curr = r_curr;
+    ov->diag.in_window = in_window;
+    ov->diag.in_quadrant_1 = in_quadrant_1;
+    ov->diag.singularity_triggered = singularity_triggered;
 }
 
 void overlay_render(const OverlayState *ov, SDL_Renderer *ren) {
