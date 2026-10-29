@@ -6,6 +6,7 @@
 #define OVERLAY_H
 
 #include "kvm_config.h"
+#include "one_euro.h"
 
 #include <SDL2/SDL.h>
 #include <stdbool.h>
@@ -25,7 +26,7 @@
 #define OVERLAY_BASE_SPEED      2.20f                       // CCW rotation speed (rad/s)
 #define OVERLAY_SPIN_TAU        0.20f                       // Exponential spin-up/down time constant (s)
 #define OVERLAY_NUM_DOTS        8                           // Number of dots in the dotted circle
-#define OVERLAY_DOT_RADIUS      12.0f                       // Fixed radius of each dot (px)
+#define OVERLAY_DOT_RADIUS      8.0f                        // Fixed radius of each dot (px)
 
 // 1-Euro Filter Parameters (Pointer Position Smoothing)
 #define ONEEURO_MIN_CUTOFF      1.0f                        // Minimum cutoff frequency fc_min (Hz)
@@ -61,9 +62,10 @@ typedef enum {
 
 typedef struct {
     OverlayPhase phase;
-    float u;          // Compression state [0.0f, 1.0f]
-    float omega_vis;  // Visual CCW rotation speed (rad/s)
-    float theta_vis;  // Visual rotation angle (rad)
+    float u;                 // Compression state [0.0f, 1.0f]
+    float omega_vis;         // Visual CCW rotation speed (rad/s)
+    float theta_vis;         // Visual rotation angle (rad)
+    OneEuroFilter2D filter;  // 2D 1-Euro pointer position & velocity filter
 } OverlayState;
 
 void overlay_init(OverlayState *ov);

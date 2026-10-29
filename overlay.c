@@ -1,10 +1,11 @@
 /**
- * overlay.c — [TODO-1] Feedforward Radial Overlay (Subtask 1: Phases 1 & 2)
+ * overlay.c — [TODO-1] Feedforward Radial Overlay (Subtask 2: Phases 1, 2, & 3)
  */
 
 #include "overlay.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #ifndef M_PI
@@ -50,6 +51,7 @@ void overlay_init(OverlayState *ov) {
     ov->u = 0.0f;
     ov->omega_vis = 0.0f;
     ov->theta_vis = 0.0f;
+    one_euro_2d_reset(&ov->filter);
     init_dot_geometry_tables();
 }
 
@@ -66,17 +68,59 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     bool in_quadrant_1 = in_window &&
                          (raw_x >= (WIN_W / 2) && raw_y <= (WIN_H / 2));
 
-    // Subtask 1 Phase Transitions: OVERLAY_DORMANT <-> OVERLAY_REELING_IN
+    // Section 3: Real-Time 2D 1-Euro Filter Update
+    float x_hat = (float)raw_x;
+    float y_hat = (float)raw_y;
+    float vx_hat = 0.0f;
+    float vy_hat = 0.0f;
+
+    if (in_window) {
+        one_euro_2d_update(&ov->filter,
+                           (float)raw_x, (float)raw_y, dt,
+                           ONEEURO_MIN_CUTOFF, ONEEURO_BETA, ONEEURO_D_CUTOFF,
+                           &x_hat, &y_hat, &vx_hat, &vy_hat);
+    } else {
+        // Reset filter when pointer exits onto host desktop to prevent re-entry velocity spikes
+        one_euro_2d_reset(&ov->filter);
+    }
+
+    // Section 4: First-Order Polar Kinematics (Screen Coordinates: +x Right, +y Down)
+    float dx = x_hat - OVERLAY_CENTER_X;
+    float dy = y_hat - OVERLAY_CENTER_Y;
+    float d  = hypotf(dx, dy);
+
+    float d_safe    = fmaxf(d, 1e-4f);
+    float v_theta   = (dy * vx_hat - dx * vy_hat) / d_safe;
+    float v_r       = (dx * vx_hat + dy * vy_hat) / d_safe;
+    float omega_ptr = v_theta / fmaxf(d, OVERLAY_D_FLOOR);
+
+    float v_theta_sq = v_theta * v_theta;
+    float v_r_sq     = v_r * v_r;
+    float psi = v_theta_sq /
+                (v_theta_sq + OVERLAY_PSI_ALPHA * v_r_sq + OVERLAY_PSI_EPSILON);
+
+    // Section 5: Phase Transitions (Strictly anchored to nominal OVERLAY_R0, never R_curr!)
     switch (ov->phase) {
         case OVERLAY_DORMANT:
             if (in_quadrant_1) {
-                ov->phase = OVERLAY_REELING_IN;
+                ov->phase = (d <= OVERLAY_ZONE_IN) ? OVERLAY_ENGAGEMENT : OVERLAY_REELING_IN;
             }
             break;
 
         case OVERLAY_REELING_IN:
             if (!in_quadrant_1) {
                 ov->phase = OVERLAY_DORMANT;
+            } else if (d <= OVERLAY_ZONE_IN) {
+                ov->phase = OVERLAY_ENGAGEMENT;
+            }
+            break;
+
+        case OVERLAY_ENGAGEMENT:
+            // Hysteresis retention while inside window and d <= OVERLAY_ZONE_OUT
+            if (!in_window) {
+                ov->phase = OVERLAY_DORMANT;
+            } else if (d > OVERLAY_ZONE_OUT) {
+                ov->phase = in_quadrant_1 ? OVERLAY_REELING_IN : OVERLAY_DORMANT;
             }
             break;
 
@@ -89,7 +133,7 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     float spin_alpha = dt / OVERLAY_SPIN_TAU;
     if (spin_alpha > 1.0f) spin_alpha = 1.0f;
 
-    // Phase Kinematics Update
+    // Phase Kinematics & Control Law Update
     switch (ov->phase) {
         case OVERLAY_DORMANT:
             // Compression state u decays toward 0.0f
@@ -108,6 +152,30 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
             // Advance rotation angle (CCW in screen space)
             ov->theta_vis -= ov->omega_vis * dt;
             break;
+
+        case OVERLAY_ENGAGEMENT: {
+            // Phase 3 Differential Winding & Non-Linear Spring Control Law
+            float ccw_drive   = OVERLAY_K_IN * psi * fmaxf(0.0f, omega_ptr - OVERLAY_OMEGA_DEADBAND);
+            float spring_open = OVERLAY_GAMMA_OPEN * (1.0f + OVERLAY_BETA_STIFF * ov->u);
+            float cw_unwind   = OVERLAY_K_CW * fmaxf(0.0f, -omega_ptr);
+            float du_dt       = ccw_drive - spring_open - cw_unwind;
+
+            ov->u += du_dt * dt;
+            if (ov->u < 0.0f) ov->u = 0.0f;
+
+            // Maintain uniform spin speed at OVERLAY_BASE_SPEED ([TODO-3] spin-up deferred)
+            ov->omega_vis = OVERLAY_BASE_SPEED;
+            ov->theta_vis -= ov->omega_vis * dt;
+
+            // Singularity Trigger (u >= 1.0f)
+            // Temporary Subtask 2 checkpoint: log trigger and reset u = 0.0f for repeated testing
+            if (ov->u >= 1.0f) {
+                printf("[OVERLAY] Singularity triggered (u >= 1.0)\n");
+                fflush(stdout);
+                ov->u = 0.0f;
+            }
+            break;
+        }
 
         default:
             break;
@@ -128,6 +196,8 @@ void overlay_render(const OverlayState *ov, SDL_Renderer *ren) {
 
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 
+    float uc = fminf(fmaxf(ov->u, 0.0f), 1.0f);
+
     SDL_Color color;
     switch (ov->phase) {
         case OVERLAY_DORMANT:
@@ -136,13 +206,24 @@ void overlay_render(const OverlayState *ov, SDL_Renderer *ren) {
             break;
 
         case OVERLAY_REELING_IN:
-        default:
             // Light Cyan (100, 210, 255), Alpha 150 (~59%)
             color = (SDL_Color){100, 210, 255, 150};
             break;
+
+        case OVERLAY_ENGAGEMENT:
+        default: {
+            // Smooth RGB shift from Light Cyan (100, 210, 255) -> Magenta (255, 100, 200),
+            // Alpha scales as 160 + 80 * u
+            uint8_t r = (uint8_t)(100.0f + (255.0f - 100.0f) * uc + 0.5f);
+            uint8_t g = (uint8_t)(210.0f + (100.0f - 210.0f) * uc + 0.5f);
+            uint8_t b = (uint8_t)(255.0f + (200.0f - 255.0f) * uc + 0.5f);
+            uint8_t a = (uint8_t)(160.0f + 80.0f * uc + 0.5f);
+            color = (SDL_Color){r, g, b, a};
+            break;
+        }
     }
 
-    float r_curr = OVERLAY_R0 * (1.0f - ov->u) + OVERLAY_R_MIN * ov->u;
+    float r_curr = OVERLAY_R0 * (1.0f - uc) + OVERLAY_R_MIN * uc;
     const float two_pi = 2.0f * (float)M_PI;
     const float step_angle = two_pi / (float)OVERLAY_NUM_DOTS;
 
@@ -174,4 +255,3 @@ void overlay_render(const OverlayState *ov, SDL_Renderer *ren) {
                        verts, OVERLAY_NUM_DOTS * VERTS_PER_DOT,
                        s_dot_ring_indices, OVERLAY_NUM_DOTS * INDICES_PER_DOT);
 }
-
