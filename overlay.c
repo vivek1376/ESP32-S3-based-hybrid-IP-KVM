@@ -1,5 +1,5 @@
 /**
- * overlay.c — [TODO-1] Feedforward Radial Overlay (Subtask 2: Phases 1, 2, & 3)
+ * overlay.c — [TODO-1] Feedforward Radial Overlay (Subtask 2 + Fading Pointer Trails)
  */
 
 #include "overlay.h"
@@ -44,6 +44,166 @@ static void init_dot_geometry_tables(void) {
     s_geom_initialized = true;
 }
 
+static void trail_update(OverlayTrail *tr, float x, float y, bool in_window, float dt) {
+    // 1. Age existing points and evict expired tail points
+    for (uint32_t i = 0; i < tr->count; ++i) {
+        uint32_t slot = (tr->head + i) % OVERLAY_TRAIL_CAPACITY;
+        tr->pts[slot].age_sec += dt;
+    }
+    while (tr->count > 0) {
+        if (tr->pts[tr->head].age_sec >= OVERLAY_TRAIL_LIFETIME) {
+            tr->head = (tr->head + 1u) % OVERLAY_TRAIL_CAPACITY;
+            tr->count--;
+        } else {
+            break;
+        }
+    }
+
+    // 2. Break stroke cleanly when pointer leaves window
+    if (!in_window) {
+        tr->active_stroke = false;
+        return;
+    }
+
+    if (!tr->active_stroke) {
+        tr->stroke_id++;
+        tr->active_stroke = true;
+    }
+
+    // 3. Only append a new vertex if moved >= OVERLAY_TRAIL_MIN_STEP in current stroke
+    if (tr->count > 0) {
+        uint32_t last_slot = (tr->head + tr->count - 1u) % OVERLAY_TRAIL_CAPACITY;
+        const OverlayTrailPoint *last = &tr->pts[last_slot];
+        if (last->stroke_id == tr->stroke_id) {
+            float dist = hypotf(x - last->x, y - last->y);
+            if (dist < OVERLAY_TRAIL_MIN_STEP) {
+                return;
+            }
+        }
+    }
+
+    if (tr->count == OVERLAY_TRAIL_CAPACITY) {
+        tr->head = (tr->head + 1u) % OVERLAY_TRAIL_CAPACITY;
+        tr->count--;
+    }
+
+    uint32_t write_slot = (tr->head + tr->count) % OVERLAY_TRAIL_CAPACITY;
+    tr->pts[write_slot].x = x;
+    tr->pts[write_slot].y = y;
+    tr->pts[write_slot].age_sec = 0.0f;
+    tr->pts[write_slot].stroke_id = tr->stroke_id;
+    tr->count++;
+}
+
+static void trail_render(const OverlayTrail *tr, SDL_Renderer *ren,
+                         uint8_t r, uint8_t g, uint8_t b, uint8_t max_alpha) {
+    if (tr->count < 2) return;
+
+    SDL_Vertex verts[OVERLAY_TRAIL_CAPACITY * 2];
+    int indices[(OVERLAY_TRAIL_CAPACITY - 1) * 6];
+    int v_count = 0;
+    int i_count = 0;
+
+    uint32_t i = 0;
+    while (i < tr->count) {
+        uint32_t run_start = i;
+        uint32_t sid = tr->pts[(tr->head + run_start) % OVERLAY_TRAIL_CAPACITY].stroke_id;
+        i++;
+        while (i < tr->count &&
+               tr->pts[(tr->head + i) % OVERLAY_TRAIL_CAPACITY].stroke_id == sid) {
+            i++;
+        }
+        uint32_t run_len = i - run_start;
+        if (run_len < 2) continue;
+
+        for (uint32_t j = 0; j < run_len; ++j) {
+            const OverlayTrailPoint *curr =
+                &tr->pts[(tr->head + run_start + j) % OVERLAY_TRAIL_CAPACITY];
+
+            float tx = 1.0f, ty = 0.0f;
+            if (j == 0) {
+                const OverlayTrailPoint *next =
+                    &tr->pts[(tr->head + run_start + j + 1u) % OVERLAY_TRAIL_CAPACITY];
+                float dx = next->x - curr->x;
+                float dy = next->y - curr->y;
+                float len = fmaxf(hypotf(dx, dy), 1e-4f);
+                tx = dx / len;
+                ty = dy / len;
+            } else if (j == run_len - 1u) {
+                const OverlayTrailPoint *prev =
+                    &tr->pts[(tr->head + run_start + j - 1u) % OVERLAY_TRAIL_CAPACITY];
+                float dx = curr->x - prev->x;
+                float dy = curr->y - prev->y;
+                float len = fmaxf(hypotf(dx, dy), 1e-4f);
+                tx = dx / len;
+                ty = dy / len;
+            } else {
+                const OverlayTrailPoint *prev =
+                    &tr->pts[(tr->head + run_start + j - 1u) % OVERLAY_TRAIL_CAPACITY];
+                const OverlayTrailPoint *next =
+                    &tr->pts[(tr->head + run_start + j + 1u) % OVERLAY_TRAIL_CAPACITY];
+                float dx0 = curr->x - prev->x;
+                float dy0 = curr->y - prev->y;
+                float l0 = fmaxf(hypotf(dx0, dy0), 1e-4f);
+                float dx1 = next->x - curr->x;
+                float dy1 = next->y - curr->y;
+                float l1 = fmaxf(hypotf(dx1, dy1), 1e-4f);
+                float sx = (dx0 / l0) + (dx1 / l1);
+                float sy = (dy0 / l0) + (dy1 / l1);
+                float slen = hypotf(sx, sy);
+                if (slen > 1e-3f) {
+                    tx = sx / slen;
+                    ty = sy / slen;
+                } else {
+                    tx = dx0 / l0;
+                    ty = dy0 / l0;
+                }
+            }
+
+            float nx = -ty;
+            float ny = tx;
+
+            float life = 1.0f - (curr->age_sec / OVERLAY_TRAIL_LIFETIME);
+            if (life < 0.0f) life = 0.0f;
+            if (life > 1.0f) life = 1.0f;
+
+            float half_w = 0.5f + 1.8f * life;
+            uint8_t a = (uint8_t)((float)max_alpha * (life * life) + 0.5f);
+            SDL_Color col = {r, g, b, a};
+
+            int v_curr = v_count;
+            verts[v_count].position.x = curr->x + nx * half_w;
+            verts[v_count].position.y = curr->y + ny * half_w;
+            verts[v_count].color = col;
+            verts[v_count].tex_coord.x = 0.0f;
+            verts[v_count].tex_coord.y = 0.0f;
+            v_count++;
+
+            verts[v_count].position.x = curr->x - nx * half_w;
+            verts[v_count].position.y = curr->y - ny * half_w;
+            verts[v_count].color = col;
+            verts[v_count].tex_coord.x = 0.0f;
+            verts[v_count].tex_coord.y = 0.0f;
+            v_count++;
+
+            if (j > 0) {
+                int v_prev = v_curr - 2;
+                indices[i_count++] = v_prev;
+                indices[i_count++] = v_prev + 1;
+                indices[i_count++] = v_curr;
+
+                indices[i_count++] = v_prev + 1;
+                indices[i_count++] = v_curr + 1;
+                indices[i_count++] = v_curr;
+            }
+        }
+    }
+
+    if (i_count > 0) {
+        SDL_RenderGeometry(ren, NULL, verts, v_count, indices, i_count);
+    }
+}
+
 void overlay_init(OverlayState *ov) {
     memset(ov, 0, sizeof(*ov));
     ov->phase = OVERLAY_DORMANT;
@@ -83,6 +243,10 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
         // Reset filter when pointer exits onto host desktop to prevent re-entry velocity spikes
         one_euro_2d_reset(&ov->filter);
     }
+
+    // Update translucent fading pointer trails (raw & 1-Euro filtered)
+    trail_update(&ov->raw_trail, (float)raw_x, (float)raw_y, in_window, dt);
+    trail_update(&ov->filt_trail, x_hat, y_hat, in_window, dt);
 
     // Section 4: First-Order Polar Kinematics (Screen Coordinates: +x Right, +y Down)
     float dx = x_hat - OVERLAY_CENTER_X;
@@ -223,12 +387,18 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
 }
 
 void overlay_render(const OverlayState *ov, SDL_Renderer *ren) {
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+
+    // Render translucent fading pointer trails:
+    //  1) Raw mouse pointer      -> Pale Cyan  (165, 243, 252)
+    //  2) 1-Euro filtered pointer -> Pale Olive (212, 226, 142)
+    trail_render(&ov->raw_trail, ren, 165, 243, 252, 155);
+    trail_render(&ov->filt_trail, ren, 212, 226, 142, 185);
+
     if (ov->phase == OVERLAY_POPOUT) {
         // Collapsed dotted circle is hidden during OVERLAY_POPOUT (implemented in Subtask 3)
         return;
     }
-
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 
     float uc = fminf(fmaxf(ov->u, 0.0f), 1.0f);
 

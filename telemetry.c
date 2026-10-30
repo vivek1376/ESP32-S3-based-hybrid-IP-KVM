@@ -20,9 +20,10 @@
 #define ANSI_CYAN    "\033[1;36m"
 #define ANSI_MAGENTA "\033[1;35m"
 #define ANSI_YELLOW  "\033[1;33m"
-#define ANSI_GREEN   "\033[1;32m"
-#define ANSI_RED     "\033[1;31m"
-#define ANSI_WHITE   "\033[0;37m"
+#define ANSI_GREEN       "\033[1;32m"
+#define ANSI_RED         "\033[1;31m"
+#define ANSI_WHITE       "\033[0;37m"
+#define ANSI_PALE_YELLOW "\033[38;5;229m"
 
 static void resolve_tty_path(const char *arg, char *out, size_t out_sz) {
     if (!arg || arg[0] == '\0') {
@@ -51,15 +52,28 @@ static void resolve_tty_path(const char *arg, char *out, size_t out_sz) {
     }
 }
 
-static void build_ascii_bar(float norm_val, char *buf, int width) {
+static void build_unicode_bar(float norm_val, char *buf, size_t buf_sz, int width) {
     if (norm_val < 0.0f) norm_val = 0.0f;
     if (norm_val > 1.0f) norm_val = 1.0f;
     int filled = (int)(norm_val * (float)width + 0.5f);
     if (filled > width) filled = width;
+
+    size_t pos = 0;
     for (int i = 0; i < width; ++i) {
-        buf[i] = (i < filled) ? '#' : '.';
+        if (i < filled) {
+            // U+258C LEFT HALF BLOCK '▌' (UTF-8: 0xE2 0x96 0x8C)
+            if (pos + 3 < buf_sz) {
+                buf[pos++] = '\xe2';
+                buf[pos++] = '\x96';
+                buf[pos++] = '\x8c';
+            }
+        } else {
+            if (pos + 1 < buf_sz) {
+                buf[pos++] = ' ';
+            }
+        }
     }
-    buf[width] = '\0';
+    buf[pos] = '\0';
 }
 
 static const char *phase_ansi_color(OverlayPhase phase) {
@@ -175,10 +189,10 @@ static void render_tty_dashboard(TelemetryState *ts,
 
     const OverlayDiagnostics *dg = &ov->diag;
 
-    char psi_bar[25];
-    char u_bar[25];
-    build_ascii_bar(dg->psi, psi_bar, 24);
-    build_ascii_bar(ov->u, u_bar, 24);
+    char psi_bar[96];
+    char u_bar[96];
+    build_unicode_bar(dg->psi, psi_bar, sizeof(psi_bar), 24);
+    build_unicode_bar(ov->u, u_bar, sizeof(u_bar), 24);
 
     const char *zone_tag = "OUTSIDE ZONE_OUT";
     const char *zone_col = ANSI_DIM;
@@ -236,7 +250,7 @@ static void render_tty_dashboard(TelemetryState *ts,
             dg->v_theta, dg->v_r);
     fprintf(fp, "  omega_ptr    : %+7.2f rad/s (deadband: %.2f rad/s)\033[K\n",
             dg->omega_ptr, OVERLAY_OMEGA_DEADBAND);
-    fprintf(fp, "  Circularity  :   %5.3f [%s] (psi)\033[K\n",
+    fprintf(fp, "  Circularity  :   %5.3f [" ANSI_PALE_YELLOW "%s" ANSI_RESET "] (psi)\033[K\n",
             dg->psi, psi_bar);
     fprintf(fp, "\033[K\n");
 
@@ -245,7 +259,7 @@ static void render_tty_dashboard(TelemetryState *ts,
             dg->ccw_drive, dg->spring_open,
             (dg->du_dt > 0.005f) ? ANSI_GREEN : ((dg->du_dt < -0.005f) ? ANSI_RED : ANSI_DIM),
             dg->du_dt);
-    fprintf(fp, "  Compression u:   %5.3f [%s] | R_curr: %5.1f px\033[K\n",
+    fprintf(fp, "  Compression u:   %5.3f [" ANSI_PALE_YELLOW "%s" ANSI_RESET "] | R_curr: %5.1f px\033[K\n",
             ov->u, u_bar, dg->r_curr);
     fprintf(fp, "  Visual Spin  : omega_vis=%6.2f rad/s | Singularities: %u\033[K\n",
             ov->omega_vis, dg->singularity_count);

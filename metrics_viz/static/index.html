@@ -44,19 +44,14 @@
       <div class="kpi-sub" id="kpi-slow-sub">Slow (&gt;20 ms): 0 (0.00%)</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Active Overlay Phase</div>
-      <div class="kpi-value" id="kpi-phase">&mdash;</div>
-      <div class="kpi-sub" id="kpi-phase-sub">d = &mdash; px | Singularities: 0</div>
-    </div>
-    <div class="kpi-card">
       <div class="kpi-label">Compression u &amp; Circularity &psi;</div>
       <div class="kpi-value" id="kpi-u-psi">&mdash;</div>
-      <div class="kpi-sub" id="kpi-omega-sub">&omega;_vis: &mdash; | &omega;_ptr: &mdash; rad/s</div>
+      <div class="kpi-sub" id="kpi-omega-sub">&omega;_vis: &mdash; | &omega;_ptr: &mdash; rad/s | Singularities: 0</div>
     </div>
   </section>
 
   <main class="charts-grid">
-    <!-- Row 1: Running FPS + Frame Time CDF -->
+    <!-- Row 1: Running FPS + Frame Time Frequency Distribution -->
     <section class="chart-card">
       <div class="chart-header">
         <div>
@@ -64,7 +59,7 @@
           <p class="chart-subtitle">Instantaneous 3-frame rolling FPS &bull; Red markers indicate slow frames (&gt;20 ms)</p>
         </div>
         <div class="legend">
-          <span><i class="swatch" style="background:#38bdf8"></i>3-Frame FPS</span>
+          <span><i class="swatch" style="background:#67e8f9"></i>3-Frame FPS</span>
           <span><i class="swatch" style="background:#f87171"></i>Slow Frame (&gt;20 ms)</span>
         </div>
       </div>
@@ -76,17 +71,17 @@
     <section class="chart-card">
       <div class="chart-header">
         <div>
-          <h2>Frame Time Cumulative Frequency Distribution (CDF)</h2>
-          <p class="chart-subtitle" id="cdf-stats-line">P50: &mdash; | P95: &mdash; | P99: &mdash; | Max: &mdash;</p>
+          <h2>Frame Time Frequency Distribution</h2>
+          <p class="chart-subtitle" id="freq-stats-line">P50: &mdash; | P95: &mdash; | P99: &mdash; | Max: &mdash;</p>
         </div>
         <div class="legend">
-          <span><i class="swatch" style="background:#a78bfa"></i>Cumulative %</span>
+          <span><i class="swatch" style="background:#5eead4"></i>Frequency (% of frames)</span>
           <span><i class="swatch" style="background:#fbbf24"></i>16.67 ms (60 Hz)</span>
-          <span><i class="swatch" style="background:#f87171"></i>&gt;20 ms Slow Zone</span>
+          <span><i class="swatch" style="background:#f87171"></i>&gt;20 ms Slow Tail</span>
         </div>
       </div>
       <div class="canvas-wrap">
-        <canvas id="canvas-cdf"></canvas>
+        <canvas id="canvas-freq"></canvas>
       </div>
     </section>
 
@@ -100,7 +95,7 @@
         <div class="legend">
           <span><i class="swatch" style="background:#f472b6"></i>ov-&gt;u [0..1]</span>
           <span><i class="swatch" style="background:#2dd4bf"></i>&psi; circularity [0..1]</span>
-          <span><i class="swatch" style="background:#38bdf8"></i>ov-&gt;omega_vis (rad/s)</span>
+          <span><i class="swatch" style="background:#67e8f9"></i>ov-&gt;omega_vis (rad/s)</span>
           <span><i class="swatch" style="background:#fbbf24"></i>omega_ptr (rad/s)</span>
           <span><i class="swatch" style="background:#fde047"></i>Singularity Trigger</span>
         </div>
@@ -121,7 +116,7 @@
           <span><i class="swatch" style="background:#4ade80"></i>ccw_drive (+1/s)</span>
           <span><i class="swatch" style="background:#fb7185"></i>-spring_open (-1/s)</span>
           <span><i class="swatch" style="background:#f8fafc"></i>net du/dt (1/s)</span>
-          <span><i class="swatch" style="background:#818cf8"></i>d (px)</span>
+          <span><i class="swatch" style="background:#a5b4fc"></i>d (px)</span>
         </div>
       </div>
       <div class="canvas-wrap canvas-tall">
@@ -135,4 +130,3 @@
   <script src="/static/app.js"></script>
 </body>
 </html>
-

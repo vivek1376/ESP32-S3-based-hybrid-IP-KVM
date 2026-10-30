@@ -12,18 +12,14 @@
   const ZONE_OUT_PX = 145.80;
   const FLAG_SINGULARITY = 1 << 2;
 
+  const GRID_COLOR = "#114554";
+  const LABEL_COLOR = "#8ec5d1";
+
   const PHASE_NAMES = [
     "OVERLAY_DORMANT",
     "OVERLAY_REELING_IN",
     "OVERLAY_ENGAGEMENT",
     "OVERLAY_POPOUT",
-  ];
-
-  const PHASE_COLORS = [
-    "#cbd5e1",
-    "#38bdf8",
-    "#f472b6",
-    "#fbbf24",
   ];
 
   // Columnar in-memory telemetry store
@@ -54,8 +50,9 @@
   let isInitialFetch = true;
   let isPaused = false;
   let windowSec = 30;
-  let hoverTimeSec = null; // Synchronized hover time across time-series charts
-  let cdfHoverMs = null;   // Hover frame-time on CDF chart
+  let hoverTimeSec = null;  // Synchronized hover time across time-series charts
+  let freqHoverMs = null;   // Hover frame-time on Frequency Distribution chart
+  let lastFreqBins = null;  // Cached histogram bins for hover lookup
 
   // DOM Elements
   const elBadge = document.getElementById("status-badge");
@@ -71,14 +68,12 @@
   const elKpiFpsSub = document.getElementById("kpi-fps-sub");
   const elKpiDtTail = document.getElementById("kpi-dt-tail");
   const elKpiSlowSub = document.getElementById("kpi-slow-sub");
-  const elKpiPhase = document.getElementById("kpi-phase");
-  const elKpiPhaseSub = document.getElementById("kpi-phase-sub");
   const elKpiUPsi = document.getElementById("kpi-u-psi");
   const elKpiOmegaSub = document.getElementById("kpi-omega-sub");
-  const elCdfStats = document.getElementById("cdf-stats-line");
+  const elFreqStats = document.getElementById("freq-stats-line");
 
   const canvasFps = document.getElementById("canvas-fps");
-  const canvasCdf = document.getElementById("canvas-cdf");
+  const canvasFreq = document.getElementById("canvas-freq");
   const canvasOmegaU = document.getElementById("canvas-omega-u");
   const canvasControl = document.getElementById("canvas-control");
 
@@ -102,6 +97,7 @@
     store.sorted_dt = new Float32Array(0);
     store.slow_count = 0;
     store.singularity_count = 0;
+    lastFreqBins = null;
   }
 
   function formatBytes(bytes) {
@@ -159,7 +155,7 @@
       store.r_curr.push(d.r_curr[i]);
     }
 
-    // Rebuild sorted Float32Array for exact CDF & percentiles (skipping frame 0 init tick)
+    // Rebuild sorted Float32Array for percentiles & frequency binning (skipping frame 0 init tick)
     const total = store.raw_dt_ms.length;
     if (total > 1) {
       const arr = new Float32Array(total - 1);
@@ -275,21 +271,16 @@
 
     elKpiDtTail.textContent = p99.toFixed(2) + " / " + maxDt.toFixed(2) + " ms";
     elKpiSlowSub.textContent = "Slow (>20 ms): " + store.slow_count + " (" + slowPct.toFixed(2) + "%)";
-    elCdfStats.textContent =
+    elFreqStats.textContent =
       "P50: " + p50.toFixed(2) + " ms | P95: " + p95.toFixed(2) +
       " ms | P99: " + p99.toFixed(2) + " ms | Max: " + maxDt.toFixed(2) + " ms";
-
-    const ph = store.phase[last] || 0;
-    elKpiPhase.textContent = PHASE_NAMES[ph] || "UNKNOWN";
-    elKpiPhase.style.color = PHASE_COLORS[ph] || "#e2e8f0";
-    elKpiPhaseSub.textContent =
-      "d = " + store.d[last].toFixed(1) + " px | Singularities: " + store.singularity_count;
 
     elKpiUPsi.textContent =
       "u = " + store.u[last].toFixed(3) + "  |  \u03c8 = " + store.psi[last].toFixed(3);
     elKpiOmegaSub.textContent =
       "\u03c9_vis: " + store.omega_vis[last].toFixed(2) +
-      " | \u03c9_ptr: " + (store.omega_ptr[last] >= 0 ? "+" : "") + store.omega_ptr[last].toFixed(2) + " rad/s";
+      " | \u03c9_ptr: " + (store.omega_ptr[last] >= 0 ? "+" : "") + store.omega_ptr[last].toFixed(2) +
+      " rad/s | Singularities: " + store.singularity_count;
   }
 
   // Prepare HiDPI canvas context and return CSS pixel dimensions
@@ -321,7 +312,7 @@
   }
 
   function drawEmptyState(ctx, w, h, msg) {
-    ctx.fillStyle = "#64748b";
+    ctx.fillStyle = LABEL_COLOR;
     ctx.font = "13px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -330,9 +321,9 @@
 
   function drawTimeGrid(ctx, pad, plotW, plotH, tMin, tMax) {
     const ticks = 6;
-    ctx.strokeStyle = "#1e293b";
+    ctx.strokeStyle = GRID_COLOR;
     ctx.lineWidth = 1;
-    ctx.fillStyle = "#94a3b8";
+    ctx.fillStyle = LABEL_COLOR;
     ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
@@ -355,7 +346,6 @@
 
     const toX = (t) => pad.left + ((t - tMin) / span) * plotW;
 
-    // Coalesce contiguous phase runs
     let runStart = startIdx;
     let curPhase = store.phase[startIdx];
     for (let i = startIdx + 1; i <= endIdx; i++) {
@@ -365,9 +355,9 @@
           const x0 = Math.max(pad.left, toX(store.t[runStart]));
           const x1 = Math.min(pad.left + plotW, toX(store.t[Math.min(endIdx - 1, i)]));
           if (x1 > x0) {
-            if (curPhase === 1) ctx.fillStyle = "rgba(56, 189, 248, 0.06)";
-            else if (curPhase === 2) ctx.fillStyle = "rgba(244, 114, 182, 0.10)";
-            else ctx.fillStyle = "rgba(251, 191, 36, 0.12)";
+            if (curPhase === 1) ctx.fillStyle = "rgba(103, 232, 249, 0.08)";
+            else if (curPhase === 2) ctx.fillStyle = "rgba(244, 114, 182, 0.12)";
+            else ctx.fillStyle = "rgba(251, 191, 36, 0.14)";
             ctx.fillRect(x0, pad.top, x1 - x0, plotH);
           }
         }
@@ -376,9 +366,8 @@
       }
     }
 
-    // Draw Singularity event markers
     ctx.save();
-    ctx.strokeStyle = "rgba(253, 224, 71, 0.85)";
+    ctx.strokeStyle = "rgba(253, 224, 71, 0.9)";
     ctx.lineWidth = 1.3;
     ctx.setLineDash([4, 3]);
     for (let i = startIdx; i < endIdx; i++) {
@@ -451,7 +440,7 @@
     if (hoverTimeSec === null || hoverTimeSec < tMin || hoverTimeSec > tMax) return;
     const x = pad.left + ((hoverTimeSec - tMin) / (tMax - tMin)) * plotW;
     ctx.save();
-    ctx.strokeStyle = "rgba(226, 232, 240, 0.55)";
+    ctx.strokeStyle = "rgba(230, 247, 250, 0.6)";
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
@@ -483,7 +472,6 @@
 
     drawTimeGrid(ctx, pad, plotW, plotH, tMin, tMax);
 
-    // Y grid & labels
     const yTicks = 4;
     ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "right";
@@ -491,24 +479,23 @@
     for (let i = 0; i <= yTicks; i++) {
       const val = yMin + (i / yTicks) * (yMax - yMin);
       const y = pad.top + plotH - (i / yTicks) * plotH;
-      ctx.strokeStyle = "#1e293b";
+      ctx.strokeStyle = GRID_COLOR;
       ctx.beginPath();
       ctx.moveTo(pad.left, y);
       ctx.lineTo(pad.left + plotW, y);
       ctx.stroke();
-      ctx.fillStyle = "#94a3b8";
+      ctx.fillStyle = LABEL_COLOR;
       ctx.fillText(val.toFixed(0), pad.left - 6, y);
     }
 
     const toX = (t) => pad.left + ((t - tMin) / (tMax - tMin)) * plotW;
     const toY = (v) => pad.top + plotH - ((Math.min(yMax, Math.max(yMin, v)) - yMin) / (yMax - yMin)) * plotH;
 
-    // 60 Hz & 30 Hz reference lines
     [60, 30].forEach((refFps) => {
       if (refFps <= yMax) {
         const y = toY(refFps);
         ctx.save();
-        ctx.strokeStyle = refFps === 60 ? "rgba(74, 222, 128, 0.3)" : "rgba(248, 113, 113, 0.3)";
+        ctx.strokeStyle = refFps === 60 ? "rgba(74, 222, 128, 0.35)" : "rgba(248, 113, 113, 0.35)";
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
         ctx.moveTo(pad.left, y);
@@ -523,7 +510,7 @@
     ctx.rect(pad.left, pad.top, plotW, plotH);
     ctx.clip();
 
-    drawSeries(ctx, store.t, store.fps3, Math.max(1, startIdx), endIdx, toX, toY, "#38bdf8", 1.7);
+    drawSeries(ctx, store.t, store.fps3, Math.max(1, startIdx), endIdx, toX, toY, "#67e8f9", 1.7);
 
     // Highlight slow frames (> 20 ms)
     ctx.fillStyle = "#f87171";
@@ -541,26 +528,69 @@
     ctx.restore();
   }
 
-  // 2. Cumulative Frequency Distribution (CDF) of Frame Time (raw_dt_ms)
-  function renderCdfChart() {
-    const { ctx, w, h } = prepCanvas(canvasCdf);
+  // 2. Regular Frequency Distribution Curve of Frame Time (raw_dt_ms)
+  function buildFreqBins(sorted) {
+    const minObserved = sorted[0];
+    const maxObserved = sorted[sorted.length - 1];
+    const xMin = Math.max(0.0, Math.min(10.0, Math.floor(minObserved * 0.8)));
+    const xMax = Math.max(26.0, Math.min(120.0, Math.ceil(maxObserved * 1.08)));
+    const span = xMax - xMin;
+
+    let binWidth = 0.25;
+    if (span > 60) binWidth = 1.0;
+    else if (span > 30) binWidth = 0.5;
+
+    const numBins = Math.max(12, Math.ceil(span / binWidth));
+    const actualXMax = xMin + numBins * binWidth;
+    const counts = new Uint32Array(numBins);
+    const total = sorted.length;
+
+    for (let i = 0; i < total; i++) {
+      const v = sorted[i];
+      let b = Math.floor((v - xMin) / binWidth);
+      if (b < 0) b = 0;
+      if (b >= numBins) b = numBins - 1;
+      counts[b]++;
+    }
+
+    const pcts = new Float32Array(numBins);
+    let maxPct = 5.0;
+    for (let b = 0; b < numBins; b++) {
+      const p = (100.0 * counts[b]) / total;
+      pcts[b] = p;
+      if (p > maxPct) maxPct = p;
+    }
+
+    return {
+      xMin,
+      xMax: actualXMax,
+      binWidth,
+      numBins,
+      counts,
+      pcts,
+      maxPct,
+      total,
+    };
+  }
+
+  function renderFreqDistChart() {
+    const { ctx, w, h } = prepCanvas(canvasFreq);
     const sorted = store.sorted_dt;
     if (!sorted || sorted.length < 2) {
       drawEmptyState(ctx, w, h, "Waiting for frame time distribution...");
       return;
     }
 
+    const bins = buildFreqBins(sorted);
+    lastFreqBins = bins;
+
     const pad = { top: 12, right: 20, bottom: 26, left: 48 };
     const plotW = w - pad.left - pad.right;
     const plotH = h - pad.top - pad.bottom;
 
-    const minDt = Math.max(0, Math.floor(sorted[0] * 0.8));
-    const maxObserved = sorted[sorted.length - 1];
-    const xMax = Math.max(25.0, Math.min(120.0, Math.ceil(maxObserved * 1.08)));
-    const xMin = Math.min(minDt, 10.0);
-
-    const toX = (ms) => pad.left + ((Math.min(xMax, Math.max(xMin, ms)) - xMin) / (xMax - xMin)) * plotW;
-    const toY = (pct) => pad.top + plotH - (pct / 100.0) * plotH;
+    const yMax = Math.min(100.0, Math.ceil((bins.maxPct * 1.12) / 5) * 5);
+    const toX = (ms) => pad.left + ((Math.min(bins.xMax, Math.max(bins.xMin, ms)) - bins.xMin) / (bins.xMax - bins.xMin)) * plotW;
+    const toY = (pct) => pad.top + plotH - (Math.min(yMax, Math.max(0, pct)) / yMax) * plotH;
 
     // X & Y grids
     ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
@@ -568,38 +598,40 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     for (let i = 0; i <= xTicks; i++) {
-      const val = xMin + (i / xTicks) * (xMax - xMin);
+      const val = bins.xMin + (i / xTicks) * (bins.xMax - bins.xMin);
       const x = pad.left + (i / xTicks) * plotW;
-      ctx.strokeStyle = "#1e293b";
+      ctx.strokeStyle = GRID_COLOR;
       ctx.beginPath();
       ctx.moveTo(x, pad.top);
       ctx.lineTo(x, pad.top + plotH);
       ctx.stroke();
-      ctx.fillStyle = "#94a3b8";
+      ctx.fillStyle = LABEL_COLOR;
       ctx.fillText(val.toFixed(1) + "ms", x, pad.top + plotH + 6);
     }
 
+    const yTicks = 4;
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    [0, 25, 50, 75, 95, 100].forEach((pct) => {
+    for (let i = 0; i <= yTicks; i++) {
+      const pct = (i / yTicks) * yMax;
       const y = toY(pct);
-      ctx.strokeStyle = pct === 95 ? "rgba(148, 163, 184, 0.25)" : "#1e293b";
+      ctx.strokeStyle = GRID_COLOR;
       ctx.beginPath();
       ctx.moveTo(pad.left, y);
       ctx.lineTo(pad.left + plotW, y);
       ctx.stroke();
-      ctx.fillStyle = "#94a3b8";
-      ctx.fillText(pct + "%", pad.left - 6, y);
-    });
+      ctx.fillStyle = LABEL_COLOR;
+      ctx.fillText(pct.toFixed(pct < 10 ? 1 : 0) + "%", pad.left - 6, y);
+    }
 
-    // Shaded Slow-Frame Zone (> 20.0 ms)
-    if (xMax > SLOW_FRAME_MS) {
+    // Shaded Slow-Frame Tail Zone (> 20.0 ms)
+    if (bins.xMax > SLOW_FRAME_MS) {
       const xSlow = toX(SLOW_FRAME_MS);
-      ctx.fillStyle = "rgba(239, 68, 68, 0.08)";
+      ctx.fillStyle = "rgba(239, 68, 68, 0.09)";
       ctx.fillRect(xSlow, pad.top, pad.left + plotW - xSlow, plotH);
 
       ctx.save();
-      ctx.strokeStyle = "rgba(248, 113, 113, 0.65)";
+      ctx.strokeStyle = "rgba(248, 113, 113, 0.7)";
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
       ctx.moveTo(xSlow, pad.top);
@@ -609,7 +641,7 @@
     }
 
     // 16.67 ms (60 Hz) vertical reference
-    if (16.67 >= xMin && 16.67 <= xMax) {
+    if (16.67 >= bins.xMin && 16.67 <= bins.xMax) {
       const x60 = toX(16.67);
       ctx.save();
       ctx.strokeStyle = "rgba(251, 191, 36, 0.65)";
@@ -621,47 +653,57 @@
       ctx.restore();
     }
 
-    // Empirical CDF curve (sampled up to 600 quantile steps + exact tail points)
     ctx.save();
     ctx.beginPath();
     ctx.rect(pad.left, pad.top, plotW, plotH);
     ctx.clip();
 
-    ctx.strokeStyle = "#a78bfa";
-    ctx.lineWidth = 2.0;
+    const baseY = toY(0);
+
+    // Translucent area fill under the frequency distribution curve
     ctx.beginPath();
-    const total = sorted.length;
-    const steps = Math.min(total, 500);
-    for (let s = 0; s < steps; s++) {
-      const idx = Math.floor((s / (steps - 1)) * (total - 1));
-      const pct = ((idx + 1) / total) * 100.0;
-      const x = toX(sorted[idx]);
-      const y = toY(pct);
-      if (s === 0) ctx.moveTo(x, y);
+    ctx.moveTo(toX(bins.xMin), baseY);
+    for (let b = 0; b < bins.numBins; b++) {
+      const centerMs = bins.xMin + (b + 0.5) * bins.binWidth;
+      ctx.lineTo(toX(centerMs), toY(bins.pcts[b]));
+    }
+    ctx.lineTo(toX(bins.xMax), baseY);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(94, 234, 212, 0.18)";
+    ctx.fill();
+
+    // Frequency distribution curve stroke
+    ctx.beginPath();
+    for (let b = 0; b < bins.numBins; b++) {
+      const centerMs = bins.xMin + (b + 0.5) * bins.binWidth;
+      const x = toX(centerMs);
+      const y = toY(bins.pcts[b]);
+      if (b === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
-    // Ensure high-percentile slow-frame tail (top 50 frames) is plotted with exact granularity
-    const tailStart = Math.max(0, total - 50);
-    for (let idx = tailStart; idx < total; idx++) {
-      const pct = ((idx + 1) / total) * 100.0;
-      ctx.lineTo(toX(sorted[idx]), toY(pct));
-    }
+    ctx.strokeStyle = "#5eead4";
+    ctx.lineWidth = 2.0;
     ctx.stroke();
 
-    // Mark P50, P95, P99 points
-    [50, 95, 99].forEach((p) => {
-      const val = percentileSorted(sorted, p);
-      const x = toX(val);
-      const y = toY(p);
-      ctx.fillStyle = p === 99 ? "#f87171" : "#c4b5fd";
-      ctx.beginPath();
-      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
+    // Highlight any non-zero slow-frame bins (> 20.0 ms) so sparse outliers stand out clearly
+    ctx.fillStyle = "#f87171";
+    for (let b = 0; b < bins.numBins; b++) {
+      if (bins.counts[b] > 0) {
+        const centerMs = bins.xMin + (b + 0.5) * bins.binWidth;
+        if (centerMs > SLOW_FRAME_MS) {
+          const x = toX(centerMs);
+          const y = toY(bins.pcts[b]);
+          ctx.beginPath();
+          ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
 
-    if (cdfHoverMs !== null && cdfHoverMs >= xMin && cdfHoverMs <= xMax) {
-      const xH = toX(cdfHoverMs);
-      ctx.strokeStyle = "rgba(226, 232, 240, 0.6)";
+    // Hover crosshair on frequency chart
+    if (freqHoverMs !== null && freqHoverMs >= bins.xMin && freqHoverMs <= bins.xMax) {
+      const xH = toX(freqHoverMs);
+      ctx.strokeStyle = "rgba(230, 247, 250, 0.65)";
       ctx.lineWidth = 1;
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
@@ -688,13 +730,11 @@
     drawTimeGrid(ctx, pad, plotW, plotH, tMin, tMax);
     drawPhaseShadingAndSingularities(ctx, pad, plotW, plotH, startIdx, endIdx, tMin, tMax);
 
-    // Left axis: [0.0 .. 1.05] for u and psi
     const uMin = 0.0;
     const uMax = 1.05;
     const toX = (t) => pad.left + ((t - tMin) / (tMax - tMin)) * plotW;
     const toYu = (u) => pad.top + plotH - ((Math.min(uMax, Math.max(uMin, u)) - uMin) / (uMax - uMin)) * plotH;
 
-    // Right axis: omega (rad/s) auto-scaled symmetric/asymmetric
     let wMin = -2.0;
     let wMax = 12.0;
     for (let i = startIdx; i < endIdx; i++) {
@@ -706,14 +746,13 @@
     wMin = Math.floor(wMin * 1.1);
     const toYw = (om) => pad.top + plotH - ((Math.min(wMax, Math.max(wMin, om)) - wMin) / (wMax - wMin)) * plotH;
 
-    // Y-axis grid & labels
     ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
     ctx.textBaseline = "middle";
     const yTicks = 4;
     for (let i = 0; i <= yTicks; i++) {
       const frac = i / yTicks;
       const y = pad.top + plotH - frac * plotH;
-      ctx.strokeStyle = "#1e293b";
+      ctx.strokeStyle = GRID_COLOR;
       ctx.beginPath();
       ctx.moveTo(pad.left, y);
       ctx.lineTo(pad.left + plotW, y);
@@ -734,10 +773,9 @@
     ctx.rect(pad.left, pad.top, plotW, plotH);
     ctx.clip();
 
-    // omega = 0 baseline
     if (wMin < 0 && wMax > 0) {
       const y0 = toYw(0);
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
+      ctx.strokeStyle = "rgba(142, 197, 209, 0.28)";
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(pad.left, y0);
@@ -746,9 +784,9 @@
       ctx.setLineDash([]);
     }
 
-    drawSeries(ctx, store.t, store.psi, startIdx, endIdx, toX, toYu, "rgba(45, 212, 191, 0.75)", 1.3, [4, 3]);
-    drawSeries(ctx, store.t, store.omega_ptr, startIdx, endIdx, toX, toYw, "rgba(251, 191, 36, 0.85)", 1.4);
-    drawSeries(ctx, store.t, store.omega_vis, startIdx, endIdx, toX, toYw, "#38bdf8", 1.8);
+    drawSeries(ctx, store.t, store.psi, startIdx, endIdx, toX, toYu, "rgba(45, 212, 191, 0.8)", 1.3, [4, 3]);
+    drawSeries(ctx, store.t, store.omega_ptr, startIdx, endIdx, toX, toYw, "rgba(251, 191, 36, 0.88)", 1.4);
+    drawSeries(ctx, store.t, store.omega_vis, startIdx, endIdx, toX, toYw, "#67e8f9", 1.8);
     drawSeries(ctx, store.t, store.u, startIdx, endIdx, toX, toYu, "#f472b6", 2.3);
 
     drawHoverCrosshair(ctx, pad, plotW, plotH, tMin, tMax);
@@ -793,7 +831,7 @@
     for (let i = 0; i <= yTicks; i++) {
       const frac = i / yTicks;
       const y = pad.top + plotH - frac * plotH;
-      ctx.strokeStyle = "#1e293b";
+      ctx.strokeStyle = GRID_COLOR;
       ctx.beginPath();
       ctx.moveTo(pad.left, y);
       ctx.lineTo(pad.left + plotW, y);
@@ -805,7 +843,7 @@
       ctx.fillText(rVal.toFixed(1), pad.left - 6, y);
 
       const dVal = frac * dMax;
-      ctx.fillStyle = "#818cf8";
+      ctx.fillStyle = "#a5b4fc";
       ctx.textAlign = "left";
       ctx.fillText(dVal.toFixed(0) + "px", pad.left + plotW + 6, y);
     }
@@ -815,20 +853,18 @@
     ctx.rect(pad.left, pad.top, plotW, plotH);
     ctx.clip();
 
-    // Rate = 0 baseline
     if (rateMin < 0 && rateMax > 0) {
       const y0 = toYr(0);
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.3)";
+      ctx.strokeStyle = "rgba(142, 197, 209, 0.32)";
       ctx.beginPath();
       ctx.moveTo(pad.left, y0);
       ctx.lineTo(pad.left + plotW, y0);
       ctx.stroke();
     }
 
-    // ZONE_IN & ZONE_OUT horizontal dashed thresholds on right axis
     [
-      { px: ZONE_IN_PX, col: "rgba(244, 114, 182, 0.45)" },
-      { px: ZONE_OUT_PX, col: "rgba(251, 191, 36, 0.35)" },
+      { px: ZONE_IN_PX, col: "rgba(244, 114, 182, 0.5)" },
+      { px: ZONE_OUT_PX, col: "rgba(251, 191, 36, 0.4)" },
     ].forEach((z) => {
       const yz = toYd(z.px);
       ctx.save();
@@ -841,10 +877,9 @@
       ctx.restore();
     });
 
-    // Build negated spring_open view inline via custom mapper
     const toYNegSpring = (s) => toYr(-s);
 
-    drawSeries(ctx, store.t, store.d, startIdx, endIdx, toX, toYd, "rgba(129, 140, 248, 0.8)", 1.4);
+    drawSeries(ctx, store.t, store.d, startIdx, endIdx, toX, toYd, "rgba(165, 180, 252, 0.85)", 1.4);
     drawSeries(ctx, store.t, store.ccw_drive, startIdx, endIdx, toX, toYr, "#4ade80", 1.6);
     drawSeries(ctx, store.t, store.spring_open, startIdx, endIdx, toX, toYNegSpring, "#fb7185", 1.6);
     drawSeries(ctx, store.t, store.du_dt, startIdx, endIdx, toX, toYr, "#f8fafc", 1.8);
@@ -855,7 +890,7 @@
 
   function renderAllCharts() {
     renderFpsChart();
-    renderCdfChart();
+    renderFreqDistChart();
     renderOmegaUChart();
     renderControlChart();
   }
@@ -907,54 +942,48 @@
     });
   }
 
-  canvasCdf.addEventListener("mousemove", (ev) => {
-    const sorted = store.sorted_dt;
-    if (!sorted || sorted.length < 2) return;
-    const rect = canvasCdf.getBoundingClientRect();
+  canvasFreq.addEventListener("mousemove", (ev) => {
+    if (!lastFreqBins) return;
+    const bins = lastFreqBins;
+    const rect = canvasFreq.getBoundingClientRect();
     const padLeft = 48;
     const padRight = 20;
     const plotW = rect.width - padLeft - padRight;
     const relX = ev.clientX - rect.left - padLeft;
     if (relX < 0 || relX > plotW) {
-      cdfHoverMs = null;
+      freqHoverMs = null;
       elTooltip.classList.add("hidden");
-      renderCdfChart();
+      renderFreqDistChart();
       return;
     }
 
-    const minDt = Math.max(0, Math.floor(sorted[0] * 0.8));
-    const xMin = Math.min(minDt, 10.0);
-    const xMax = Math.max(25.0, Math.min(120.0, Math.ceil(sorted[sorted.length - 1] * 1.08)));
-    cdfHoverMs = xMin + (relX / plotW) * (xMax - xMin);
+    freqHoverMs = bins.xMin + (relX / plotW) * (bins.xMax - bins.xMin);
+    let b = Math.floor((freqHoverMs - bins.xMin) / bins.binWidth);
+    if (b < 0) b = 0;
+    if (b >= bins.numBins) b = bins.numBins - 1;
 
-    // Count frames <= cdfHoverMs via upper bound
-    let lo = 0;
-    let hi = sorted.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (sorted[mid] <= cdfHoverMs) lo = mid + 1;
-      else hi = mid;
-    }
-    const leCount = lo;
-    const gtCount = sorted.length - leCount;
-    const pct = (100.0 * leCount) / sorted.length;
+    const binLo = bins.xMin + b * bins.binWidth;
+    const binHi = binLo + bins.binWidth;
+    const cnt = bins.counts[b];
+    const pct = bins.pcts[b];
+    const slowPct = bins.total > 0 ? (100.0 * store.slow_count / bins.total) : 0.0;
 
-    renderCdfChart();
+    renderFreqDistChart();
 
     elTooltip.innerHTML =
-      '<div class="tt-title">Frame Time Threshold: ' + cdfHoverMs.toFixed(2) + " ms</div>" +
-      '<div class="tt-row"><span>Cumulative (&le; ' + cdfHoverMs.toFixed(2) + " ms):</span><span>" +
-      pct.toFixed(2) + "% (" + leCount + ")</span></div>" +
-      '<div class="tt-row"><span>Slower (&gt; ' + cdfHoverMs.toFixed(2) + " ms):</span><span>" +
-      (100.0 - pct).toFixed(2) + "% (" + gtCount + ")</span></div>";
+      '<div class="tt-title">Frame Time Bin: [' + binLo.toFixed(2) + " .. " + binHi.toFixed(2) + " ms)</div>" +
+      '<div class="tt-row"><span>Bin Frequency:</span><span>' +
+      pct.toFixed(2) + "% (" + cnt + " frames)</span></div>" +
+      '<div class="tt-row"><span>Slow Frames (&gt;20 ms):</span><span>' +
+      store.slow_count + " (" + slowPct.toFixed(2) + "%)</span></div>";
 
     positionTooltip(ev.clientX, ev.clientY);
   });
 
-  canvasCdf.addEventListener("mouseleave", () => {
-    cdfHoverMs = null;
+  canvasFreq.addEventListener("mouseleave", () => {
+    freqHoverMs = null;
     elTooltip.classList.add("hidden");
-    renderCdfChart();
+    renderFreqDistChart();
   });
 
   function positionTooltip(clientX, clientY) {
@@ -1008,4 +1037,3 @@
   pollMetrics();
   setInterval(pollMetrics, POLL_INTERVAL_MS);
 })();
-
