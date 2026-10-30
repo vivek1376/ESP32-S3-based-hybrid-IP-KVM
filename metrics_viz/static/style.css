@@ -1,7 +1,7 @@
 :root {
-  --bg: #041d24;
-  --panel: #082d38;
-  --panel-border: #17586b;
+  --bg: #041b22;
+  --panel: #0a3340;
+  --panel-border: #072731;
   --text: #e6f7fa;
   --muted: #8ec5d1;
   --accent: #67e8f9;
@@ -33,7 +33,7 @@ body {
   gap: 12px;
   padding: 14px 18px;
   background: var(--panel);
-  border: 1px solid var(--panel-border);
+  border: 2px solid var(--panel-border);
   border-radius: 0;
   margin-bottom: 14px;
 }
@@ -91,7 +91,7 @@ body {
 .controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 0.85rem;
 }
 
@@ -99,23 +99,80 @@ body {
   color: var(--muted);
 }
 
-select, button {
-  background: #0b3c49;
-  color: var(--text);
-  border: 1px solid #1e6d84;
+/* Tactile 3D Beveled Sharp-Cornered Controls */
+select,
+button {
   border-radius: 0;
-  padding: 6px 11px;
+  padding: 6px 13px;
   font-size: 0.83rem;
+  font-weight: 600;
   cursor: pointer;
+  transition: filter 0.1s ease, transform 0.06s ease, box-shadow 0.06s ease;
 }
 
-button:hover, select:hover {
-  border-color: var(--accent);
+select {
+  background: linear-gradient(180deg, #134b5c 0%, #0b3744 100%);
+  color: var(--text);
+  border-top: 1px solid #28778e;
+  border-left: 1px solid #21677b;
+  border-right: 1px solid #051c23;
+  border-bottom: 1px solid #04161c;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 2px 0 #021015;
 }
 
-.btn-secondary {
-  background: #06252e;
-  color: var(--muted);
+select option {
+  background: #082d38;
+  color: var(--text);
+}
+
+/* Pause Button: Pastel Apricot / Sand (3D Bevel) */
+#btn-pause {
+  background: linear-gradient(180deg, #f9dfc5 0%, #ebb98b 100%);
+  color: #241506;
+  border-top: 1px solid #fff2e4;
+  border-left: 1px solid #fce9d4;
+  border-right: 1px solid #9c6d43;
+  border-bottom: 1px solid #855a33;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 2px 0 #021015;
+}
+
+/* Resume State: Pastel Mint (3D Bevel) */
+#btn-pause.is-paused {
+  background: linear-gradient(180deg, #ccf7d9 0%, #9be3b3 100%);
+  color: #0b2615;
+  border-top: 1px solid #e9fdef;
+  border-left: 1px solid #dafbe4;
+  border-right: 1px solid #4d8f64;
+  border-bottom: 1px solid #3d7852;
+}
+
+/* Clear View Button: Pastel Lavender (3D Bevel) */
+#btn-clear {
+  background: linear-gradient(180deg, #dfd9fd 0%, #beb3f5 100%);
+  color: #191233;
+  border-top: 1px solid #f3f0ff;
+  border-left: 1px solid #eae6ff;
+  border-right: 1px solid #7064ad;
+  border-bottom: 1px solid #5c5096;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 2px 0 #021015;
+}
+
+select:hover,
+button:hover {
+  filter: brightness(1.06);
+}
+
+button:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.25),
+    0 1px 0 #021015;
 }
 
 .kpi-grid {
@@ -133,7 +190,7 @@ button:hover, select:hover {
 
 .kpi-card {
   background: var(--panel);
-  border: 1px solid var(--panel-border);
+  border: 2px solid var(--panel-border);
   border-radius: 0;
   padding: 12px 15px;
   font-variant-numeric: tabular-nums;
@@ -171,7 +228,7 @@ button:hover, select:hover {
 
 .chart-card {
   background: var(--panel);
-  border: 1px solid var(--panel-border);
+  border: 2px solid var(--panel-border);
   border-radius: 0;
   padding: 14px 16px;
   display: flex;
@@ -244,8 +301,8 @@ canvas {
   position: fixed;
   pointer-events: none;
   z-index: 100;
-  background: rgba(4, 29, 36, 0.96);
-  border: 1px solid #25809b;
+  background: rgba(4, 27, 34, 0.96);
+  border: 1px solid #1d6b82;
   border-radius: 0;
   padding: 8px 11px;
   font-size: 0.77rem;
@@ -263,7 +320,7 @@ canvas {
   font-weight: 700;
   color: #67e8f9;
   margin-bottom: 4px;
-  border-bottom: 1px solid #155263;
+  border-bottom: 1px solid #134a5a;
   padding-bottom: 3px;
 }
 

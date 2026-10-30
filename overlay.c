@@ -390,10 +390,10 @@ void overlay_render(const OverlayState *ov, SDL_Renderer *ren) {
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 
     // Render translucent fading pointer trails:
-    //  1) Raw mouse pointer      -> Pale Cyan  (165, 243, 252)
-    //  2) 1-Euro filtered pointer -> Pale Olive (212, 226, 142)
-    trail_render(&ov->raw_trail, ren, 165, 243, 252, 155);
-    trail_render(&ov->filt_trail, ren, 212, 226, 142, 185);
+    //  1) Raw mouse pointer       -> Pale Yellow (254, 243, 162)
+    //  2) 1-Euro filtered pointer -> Pale Violet (214, 188, 250)
+    trail_render(&ov->raw_trail, ren, 254, 243, 162, 165);
+    trail_render(&ov->filt_trail, ren, 214, 188, 250, 185);
 
     if (ov->phase == OVERLAY_POPOUT) {
         // Collapsed dotted circle is hidden during OVERLAY_POPOUT (implemented in Subtask 3)

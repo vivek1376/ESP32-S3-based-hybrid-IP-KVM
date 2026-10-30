@@ -54,7 +54,7 @@
 #define POPOUT_DRIFT_SPEED      45.0f                       // Outward slow drift speed (px/s)
 #define POPOUT_BL_MARGIN_RATIO  0.16f                       // 16% of viewport diagonal off bottom-left
 
-// Pointer Debug Trail Parameters (Raw = Pale Cyan, Filtered = Pale Olive)
+// Pointer Debug Trail Parameters (Raw = Pale Yellow, Filtered = Pale Violet)
 #define OVERLAY_TRAIL_CAPACITY  160                         // Max trail vertices buffered (~2.5s @ 60Hz)
 #define OVERLAY_TRAIL_LIFETIME  0.85f                       // Trail fade-out duration (s)
 #define OVERLAY_TRAIL_MIN_STEP  0.75f                       // Min movement (px) to append a new segment
@@ -118,8 +118,8 @@ typedef struct {
     float theta_vis;          // Visual rotation angle (rad)
     OneEuroFilter2D filter;   // 2D 1-Euro pointer position & velocity filter
     OverlayDiagnostics diag;  // Per-frame kinematic & control telemetry snapshot
-    OverlayTrail raw_trail;   // Pale cyan fading trail for raw pointer
-    OverlayTrail filt_trail;  // Pale olive fading trail for 1-Euro filtered pointer
+    OverlayTrail raw_trail;   // Pale yellow fading trail for raw pointer
+    OverlayTrail filt_trail;  // Pale violet fading trail for 1-Euro filtered pointer
 } OverlayState;
 
 void overlay_init(OverlayState *ov);

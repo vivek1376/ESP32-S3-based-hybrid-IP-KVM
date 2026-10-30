@@ -1011,6 +1011,7 @@
   elBtnPause.addEventListener("click", () => {
     isPaused = !isPaused;
     elBtnPause.textContent = isPaused ? "Resume" : "Pause";
+    elBtnPause.classList.toggle("is-paused", isPaused);
     if (isPaused) {
       setStatus("paused", "PAUSED");
     } else {
