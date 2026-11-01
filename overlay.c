@@ -228,17 +228,20 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     bool in_quadrant_1 = in_window &&
                          (raw_x >= (WIN_W / 2) && raw_y <= (WIN_H / 2));
 
-    // Section 3: Real-Time 2D 1-Euro Filter Update
+    // Section 3: Real-Time 2D 1-Euro Filter Update (Phase-Consistent C1 Kinematics)
     float x_hat = (float)raw_x;
     float y_hat = (float)raw_y;
+    float x_mid = (float)raw_x;
+    float y_mid = (float)raw_y;
     float vx_hat = 0.0f;
     float vy_hat = 0.0f;
 
     if (in_window) {
         one_euro_2d_update(&ov->filter,
                            (float)raw_x, (float)raw_y, dt,
-                           ONEEURO_MIN_CUTOFF, ONEEURO_BETA, ONEEURO_D_CUTOFF,
-                           &x_hat, &y_hat, &vx_hat, &vy_hat);
+                           ONEEURO_MIN_CUTOFF, ONEEURO_BETA,
+                           ONEEURO_D_CUTOFF, ONEEURO_SYNC_CUTOFF,
+                           &x_hat, &y_hat, &x_mid, &y_mid, &vx_hat, &vy_hat);
     } else {
         // Reset filter when pointer exits onto host desktop to prevent re-entry velocity spikes
         one_euro_2d_reset(&ov->filter);
@@ -249,14 +252,19 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     trail_update(&ov->filt_trail, x_hat, y_hat, in_window, dt);
 
     // Section 4: First-Order Polar Kinematics (Screen Coordinates: +x Right, +y Down)
+    // Current radial distance d for spatial zone hysteresis; chord midpoint (dx_mid, dy_mid)
+    // paired with (vx_hat, vy_hat) for zero-phase-error tangential/radial decomposition.
     float dx = x_hat - OVERLAY_CENTER_X;
     float dy = y_hat - OVERLAY_CENTER_Y;
     float d  = hypotf(dx, dy);
 
-    float d_safe    = fmaxf(d, 1e-4f);
-    float v_theta   = (dy * vx_hat - dx * vy_hat) / d_safe;
-    float v_r       = (dx * vx_hat + dy * vy_hat) / d_safe;
-    float omega_ptr = v_theta / fmaxf(d, OVERLAY_D_FLOOR);
+    float dx_mid    = x_mid - OVERLAY_CENTER_X;
+    float dy_mid    = y_mid - OVERLAY_CENTER_Y;
+    float d_mid     = hypotf(dx_mid, dy_mid);
+    float d_safe    = fmaxf(d_mid, 1e-4f);
+    float v_theta   = (dy_mid * vx_hat - dx_mid * vy_hat) / d_safe;
+    float v_r       = (dx_mid * vx_hat + dy_mid * vy_hat) / d_safe;
+    float omega_ptr = v_theta / fmaxf(d_mid, OVERLAY_D_FLOOR);
 
     float v_theta_sq = v_theta * v_theta;
     float v_r_sq     = v_r * v_r;

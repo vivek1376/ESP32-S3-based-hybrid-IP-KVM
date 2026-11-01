@@ -33,6 +33,7 @@
 #define ONEEURO_MIN_CUTOFF      1.0f                        // Minimum cutoff frequency fc_min (Hz)
 #define ONEEURO_BETA            0.007f                      // Speed coefficient beta
 #define ONEEURO_D_CUTOFF        1.0f                        // Derivative cutoff frequency (Hz)
+#define ONEEURO_SYNC_CUTOFF     10.0f                       // Matched C1 kinematic post-filter cutoff (Hz)
 
 // Engagement Control Law Parameters
 #define OVERLAY_D_FLOOR         (0.30f * OVERLAY_R0)        // Clamp denominator near center (29.2 px)
