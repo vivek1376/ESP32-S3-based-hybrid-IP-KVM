@@ -252,8 +252,9 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     trail_update(&ov->filt_trail, x_hat, y_hat, in_window, dt);
 
     // Section 4: First-Order Polar Kinematics (Screen Coordinates: +x Right, +y Down)
-    // Current radial distance d for spatial zone hysteresis; chord midpoint (dx_mid, dy_mid)
-    // paired with (vx_hat, vy_hat) for zero-phase-error tangential/radial decomposition.
+    // Keep true Euclidean distance d for physical screen hit-zones (ZONE_IN / ZONE_OUT),
+    // and compute all polar kinematics from isotropic radially sqrt-scaled (dx_scaled, dy_scaled)
+    // so radial distance scales sub-linearly as sqrt(d * R_ref) without angular distortion.
     float dx = x_hat - OVERLAY_CENTER_X;
     float dy = y_hat - OVERLAY_CENTER_Y;
     float d  = hypotf(dx, dy);
@@ -261,10 +262,17 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     float dx_mid    = x_mid - OVERLAY_CENTER_X;
     float dy_mid    = y_mid - OVERLAY_CENTER_Y;
     float d_mid     = hypotf(dx_mid, dy_mid);
-    float d_safe    = fmaxf(d_mid, 1e-4f);
-    float v_theta   = (dy_mid * vx_hat - dx_mid * vy_hat) / d_safe;
-    float v_r       = (dx_mid * vx_hat + dy_mid * vy_hat) / d_safe;
-    float omega_ptr = v_theta / fmaxf(d_mid, OVERLAY_D_FLOOR);
+
+    float scale_r   = (d_mid > 1e-4f) ? sqrtf(OVERLAY_R_SCALE_REF / d_mid) : 1.0f;
+    float dx_scaled = dx_mid * scale_r;
+    float dy_scaled = dy_mid * scale_r;
+    float d_scaled  = hypotf(dx_scaled, dy_scaled);
+    float d_floor_s = sqrtf(OVERLAY_D_FLOOR * OVERLAY_R_SCALE_REF);
+
+    float d_safe    = fmaxf(d_scaled, 1e-4f);
+    float v_theta   = (dy_scaled * vx_hat - dx_scaled * vy_hat) / d_safe;
+    float v_r       = (dx_scaled * vx_hat + dy_scaled * vy_hat) / d_safe;
+    float omega_ptr = v_theta / fmaxf(d_scaled, d_floor_s);
 
     float v_theta_sq = v_theta * v_theta;
     float v_r_sq     = v_r * v_r;
@@ -381,6 +389,7 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     ov->diag.vx_hat = vx_hat;
     ov->diag.vy_hat = vy_hat;
     ov->diag.d = d;
+    ov->diag.d_scaled = d_scaled;
     ov->diag.v_theta = v_theta;
     ov->diag.v_r = v_r;
     ov->diag.omega_ptr = omega_ptr;

@@ -251,8 +251,8 @@ static void render_tty_dashboard(TelemetryState *ts,
 
     fprintf(fp, ANSI_BOLD "[Polar Kinematics]" ANSI_RESET "  (Anchor: %.0f, %.0f | ZONE_IN: %.1f | ZONE_OUT: %.1f)\033[K\n",
             OVERLAY_CENTER_X, OVERLAY_CENTER_Y, OVERLAY_ZONE_IN, OVERLAY_ZONE_OUT);
-    fprintf(fp, "  Radius d     : %7.1f px  %s[%s]" ANSI_RESET "\033[K\n",
-            dg->d, zone_col, zone_tag);
+    fprintf(fp, "  Radius d     : %7.1f px (d_scaled: %5.1f px) %s[%s]" ANSI_RESET "\033[K\n",
+            dg->d, dg->d_scaled, zone_col, zone_tag);
     fprintf(fp, "  Velocities   : v_theta=%+8.1f px/s (CCW+) | v_r=%+8.1f px/s\033[K\n",
             dg->v_theta, dg->v_r);
     fprintf(fp, "  omega_ptr    : %+7.2f rad/s (deadband: %.2f rad/s)\033[K\n",

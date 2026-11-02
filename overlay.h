@@ -37,6 +37,7 @@
 
 // Engagement Control Law Parameters
 #define OVERLAY_D_FLOOR         (0.30f * OVERLAY_R0)        // Clamp denominator near center (29.2 px)
+#define OVERLAY_R_SCALE_REF     (0.45f * OVERLAY_R0)        // Radial sqrt-scaling reference radius (43.7 px)
 #define OVERLAY_PSI_ALPHA       2.50f                       // Radial velocity penalty in psi
 #define OVERLAY_PSI_EPSILON     625.0f                      // Low-speed noise squelch (25 px/s)^2
 #define OVERLAY_OMEGA_DEADBAND  0.35f                       // Min CCW angular speed to wind (rad/s)
@@ -83,6 +84,7 @@ typedef struct {
     float vx_hat;
     float vy_hat;
     float d;
+    float d_scaled;
     float v_theta;
     float v_r;
     float omega_ptr;
