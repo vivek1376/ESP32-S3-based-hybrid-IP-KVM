@@ -104,6 +104,7 @@ void telemetry_init(TelemetryState *ts,
                     const char *video_dev);
 
 void telemetry_log_event(TelemetryState *ts, float elapsed_sec, const char *fmt, ...);
+void telemetry_log_menu_event(TelemetryState *ts, float elapsed_sec, const char *fmt, ...);
 
 void telemetry_record_frame(TelemetryState *ts,
                             float elapsed_sec,

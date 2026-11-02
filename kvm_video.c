@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 // Shared video state between V4L2/FFmpeg reader thread and SDL2 render thread
@@ -18,6 +19,7 @@ static uint8_t frame_buf[FRAME_BYTES];
 static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool new_frame_ready = false;
 static const char *video_dev = "/dev/video0";
+static bool grayscale_enabled = false;
 
 volatile bool app_running = true;
 
@@ -83,5 +85,24 @@ void kvm_video_update_texture(SDL_Texture *tex) {
         new_frame_ready = false;
         pthread_mutex_unlock(&frame_mutex);
     }
+}
+
+// Menu Option 0 (Dummy implementation): flips grayscale toggle state
+bool kvm_video_toggle_grayscale(void) {
+    // Dummy implementation for now — actual YUYV422 chroma neutralization deferred
+    grayscale_enabled = !grayscale_enabled;
+    return grayscale_enabled;
+}
+
+// Menu Option 1 (Dummy implementation): formats timestamped screenshot filename
+void kvm_video_save_screenshot(char *out_filename, size_t out_sz) {
+    // Dummy implementation for now — actual YUYV422 -> RGB24 SDL_SaveBMP deferred
+    time_t now = time(NULL);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    snprintf(out_filename, out_sz,
+             "screenshot_%04d%02d%02d_%02d%02d%02d.bmp",
+             tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
+             tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
 }
 

@@ -277,6 +277,18 @@ int main(int argc, char *argv[]) {
         if (dt > 0.100f) dt = 0.100f;
 
         overlay_update(&overlay, mouse_x, mouse_y, cursor_in_window, dt);
+        if (overlay.diag.committed_option == 0) {
+            bool enabled = kvm_video_toggle_grayscale();
+            telemetry_log_menu_event(&telemetry, elapsed_sec,
+                                     "[MENU] Band 0 activated: Grayscale Toggle (dummy -> %s)",
+                                     enabled ? "ON" : "OFF");
+        } else if (overlay.diag.committed_option == 1) {
+            char screenshot_name[64];
+            kvm_video_save_screenshot(screenshot_name, sizeof(screenshot_name));
+            telemetry_log_menu_event(&telemetry, elapsed_sec,
+                                     "[MENU] Band 1 activated: Save Screenshot (dummy -> %s)",
+                                     screenshot_name);
+        }
         telemetry_record_frame(&telemetry, elapsed_sec,
                                raw_dt * 1000.0f, dt * 1000.0f,
                                mouse_x, mouse_y, kb_grabbed, &overlay);

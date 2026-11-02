@@ -42,7 +42,7 @@ static inline float one_euro_alpha(float cutoff_hz, float dt) {
 static inline void one_euro_1d_step(OneEuroFilter1D *f, float x_raw, float dt,
                                     float min_cutoff, float beta,
                                     float d_cutoff, float sync_cutoff,
-                                    float *out_x_sync, float *out_x_mid,
+                                    float *out_x_hat, float *out_x_mid,
                                     float *out_vx_sync) {
     // 1. Internal derivative estimation & filtering (solely for adaptive cutoff modulation)
     float raw_dx = (x_raw - f->x_raw_prev) / dt;
@@ -65,7 +65,7 @@ static inline void one_euro_1d_step(OneEuroFilter1D *f, float x_raw, float dt,
     f->dx_prev = dx_est;
     f->x_sync_prev = x_sync;
 
-    *out_x_sync = x_sync;
+    *out_x_hat = x_hat;
     *out_x_mid = x_mid;
     *out_vx_sync = vx_sync;
 }

@@ -20,9 +20,9 @@
 #define OVERLAY_CENTER_Y        260.0f                      // Top-Right Quadrant Y anchor (px)
 
 // Spatial Hysteresis & Reeling-In Zones (Strictly anchored to nominal OVERLAY_R0, never R_curr!)
-#define OVERLAY_ZONE_IN         (1.82f * OVERLAY_R0)        // 176.9 px entry threshold (+30% from 1.40*R0)
-#define OVERLAY_ZONE_OUT        (1.95f * OVERLAY_R0)        // 189.5 px exit threshold (+30% from 1.50*R0)
-#define OVERLAY_ZONE_REEL       (1.24f * OVERLAY_ZONE_OUT)  // 235.0 px reeling-in radius (+24% over ZONE_OUT)
+#define OVERLAY_ENGAGEMENT_ZONE_IN   (1.82f * OVERLAY_R0)                  // 176.9 px entry threshold (+30% from 1.40*R0)
+#define OVERLAY_ENGAGEMENT_ZONE_OUT  (1.95f * OVERLAY_R0)                  // 189.5 px exit threshold (+30% from 1.50*R0)
+#define OVERLAY_REELING_ZONE         (1.24f * OVERLAY_ENGAGEMENT_ZONE_OUT) // 235.0 px reeling-in radius (+24% over ZONE_OUT)
 
 // Reeling-In Rotation Kinematics
 #define OVERLAY_BASE_SPEED      2.20f                       // CCW rotation speed (rad/s)
@@ -53,9 +53,10 @@
 #define POPOUT_DWELL_SEC        0.32f                       // 320 ms hover dwell to commit action
 #define POPOUT_BAND_WIDTH       52.0f                       // Radial thickness of each annulus (px)
 #define POPOUT_BAND_GAP         20.0f                       // Radial gap between annuli (px)
-#define POPOUT_START_INNER_R    130.0f                      // Band 0 inner radius after explosion (px)
+#define POPOUT_START_INNER_R    190.0f                      // Band 0 inner radius after explosion (px), outside ENGAGEMENT_ZONE_OUT
 #define POPOUT_DRIFT_SPEED      45.0f                       // Outward slow drift speed (px/s)
 #define POPOUT_BL_MARGIN_RATIO  0.16f                       // 16% of viewport diagonal off bottom-left
+#define POPOUT_ANNULUS_SEGMENTS 90                          // Angular quad subdivisions across 2*pi
 
 // Pointer Debug Trail Parameters (Raw = Pale Yellow, Filtered = Pale Violet)
 #define OVERLAY_TRAIL_CAPACITY  160                         // Max trail vertices buffered (~2.5s @ 60Hz)
@@ -97,7 +98,10 @@ typedef struct {
     bool in_window;
     bool in_reel_zone;
     bool singularity_triggered;
+    bool popout_expired;
+    int committed_option;     // -1 if none this frame; 0 = Band 0, 1 = Band 1
     uint32_t singularity_count;
+    uint32_t option_commit_count[MENU_OPTION_COUNT];
 } OverlayDiagnostics;
 
 typedef struct {
@@ -117,13 +121,19 @@ typedef struct {
 
 typedef struct {
     OverlayPhase phase;
-    float u;                  // Compression state [0.0f, 1.0f]
-    float omega_vis;          // Visual CCW rotation speed (rad/s)
-    float theta_vis;          // Visual rotation angle (rad)
-    OneEuroFilter2D filter;   // 2D 1-Euro pointer position & velocity filter
-    OverlayDiagnostics diag;  // Per-frame kinematic & control telemetry snapshot
-    OverlayTrail raw_trail;   // Pale yellow fading trail for raw pointer
-    OverlayTrail filt_trail;  // Pale violet fading trail for 1-Euro filtered pointer
+    float u;                                  // Compression state [0.0f, 1.0f]
+    float omega_vis;                          // Visual CCW rotation speed (rad/s)
+    float theta_vis;                          // Visual rotation angle (rad)
+    float popout_elapsed;                     // Elapsed time in OVERLAY_POPOUT (s)
+    float r_horizon;                          // Max bottom-left drift horizon radius (1463.2 px)
+    float band_r_in[MENU_OPTION_COUNT];       // Current inner radius of each pop-out annulus (px)
+    float band_r_out[MENU_OPTION_COUNT];      // Current outer radius of each pop-out annulus (px)
+    int dwell_band;                           // Currently hovered band index (-1 if none)
+    float dwell_timer;                        // Hover dwell accumulator on dwell_band (s)
+    OneEuroFilter2D filter;                   // 2D 1-Euro pointer position & velocity filter
+    OverlayDiagnostics diag;                  // Per-frame kinematic & control telemetry snapshot
+    OverlayTrail raw_trail;                   // Pale yellow fading trail for raw pointer
+    OverlayTrail filt_trail;                  // Pale violet fading trail for 1-Euro filtered pointer
 } OverlayState;
 
 void overlay_init(OverlayState *ov);

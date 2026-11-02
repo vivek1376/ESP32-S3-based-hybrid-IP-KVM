@@ -20,5 +20,11 @@ void *video_capture_thread(void *arg);
 // Update GPU Texture if a fresh YUYV422 frame arrived from /dev/video0
 void kvm_video_update_texture(SDL_Texture *tex);
 
+// Menu Option 0 (Dummy stub): toggles grayscale state flag and returns new state
+bool kvm_video_toggle_grayscale(void);
+
+// Menu Option 1 (Dummy stub): formats timestamped screenshot filename without writing disk
+void kvm_video_save_screenshot(char *out_filename, size_t out_sz);
+
 #endif // KVM_VIDEO_H
 

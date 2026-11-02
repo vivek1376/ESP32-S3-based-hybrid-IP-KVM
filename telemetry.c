@@ -109,6 +109,28 @@ void telemetry_log_event(TelemetryState *ts, float elapsed_sec, const char *fmt,
     }
 }
 
+void telemetry_log_menu_event(TelemetryState *ts, float elapsed_sec, const char *fmt, ...) {
+    char msg[96];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    uint32_t slot = ts->event_head % TELEMETRY_EVENT_RING_SIZE;
+    snprintf(ts->events[slot], TELEMETRY_EVENT_STR_LEN,
+             "[%8.3fs] %s", elapsed_sec, msg);
+    ts->event_head++;
+    if (ts->event_count < TELEMETRY_EVENT_RING_SIZE) {
+        ts->event_count++;
+    }
+
+    // Also emit to stdout whenever stdout is not actively hosting the in-place ANSI dashboard
+    if (ts->tty_fp != stdout || !ts->tty_ansi_enabled) {
+        printf("%s\n", msg);
+        fflush(stdout);
+    }
+}
+
 void telemetry_init(TelemetryState *ts,
                     const char *tty_arg,
                     const char *bin_path_arg,
@@ -201,19 +223,19 @@ static void render_tty_dashboard(TelemetryState *ts,
     build_unicode_bar(dg->psi, psi_bar, sizeof(psi_bar), 24);
     build_unicode_bar(ov->u, u_bar, sizeof(u_bar), 24);
 
-    const char *zone_tag = "OUTSIDE ZONE_REEL";
+    const char *zone_tag = "OUTSIDE REELING_ZONE";
     const char *zone_col = ANSI_DIM;
     if (!dg->in_window) {
         zone_tag = "OUTSIDE WINDOW";
         zone_col = ANSI_DIM;
-    } else if (dg->d <= OVERLAY_ZONE_IN) {
-        zone_tag = "INSIDE ZONE_IN";
+    } else if (dg->d <= OVERLAY_ENGAGEMENT_ZONE_IN) {
+        zone_tag = "ENGAGEMENT_ZONE_IN";
         zone_col = ANSI_MAGENTA;
-    } else if (dg->d <= OVERLAY_ZONE_OUT) {
+    } else if (dg->d <= OVERLAY_ENGAGEMENT_ZONE_OUT) {
         zone_tag = "HYSTERESIS BAND";
         zone_col = ANSI_YELLOW;
-    } else if (dg->d <= OVERLAY_ZONE_REEL) {
-        zone_tag = "INSIDE ZONE_REEL";
+    } else if (dg->d <= OVERLAY_REELING_ZONE) {
+        zone_tag = "REELING_ZONE";
         zone_col = ANSI_CYAN;
     }
 
@@ -255,8 +277,9 @@ static void render_tty_dashboard(TelemetryState *ts,
             dg->vx_hat, dg->vy_hat);
     fprintf(fp, "\033[K\n");
 
-    fprintf(fp, ANSI_BOLD "[Polar Kinematics]" ANSI_RESET "  (Anchor: %.0f, %.0f | IN: %.1f | OUT: %.1f | REEL: %.1f)\033[K\n",
-            OVERLAY_CENTER_X, OVERLAY_CENTER_Y, OVERLAY_ZONE_IN, OVERLAY_ZONE_OUT, OVERLAY_ZONE_REEL);
+    fprintf(fp, ANSI_BOLD "[Polar Kinematics]" ANSI_RESET "  (Anchor: %.0f, %.0f | ENG_IN: %.1f | ENG_OUT: %.1f | REEL: %.1f)\033[K\n",
+            OVERLAY_CENTER_X, OVERLAY_CENTER_Y,
+            OVERLAY_ENGAGEMENT_ZONE_IN, OVERLAY_ENGAGEMENT_ZONE_OUT, OVERLAY_REELING_ZONE);
     fprintf(fp, "  Radius d     : %7.1f px (d_scaled: %5.1f px) %s[%s]" ANSI_RESET "\033[K\n",
             dg->d, dg->d_scaled, zone_col, zone_tag);
     fprintf(fp, "  Velocities   : v_theta=%+8.1f px/s (CCW+) | v_r=%+8.1f px/s\033[K\n",
@@ -276,6 +299,22 @@ static void render_tty_dashboard(TelemetryState *ts,
             ov->u, u_bar, dg->r_curr);
     fprintf(fp, "  Visual Spin  : omega_vis=%6.2f rad/s | Singularities: %u\033[K\n",
             ov->omega_vis, dg->singularity_count);
+    if (ov->phase == OVERLAY_POPOUT) {
+        char dwell_bar[160];
+        float dwell_norm = ov->dwell_timer / POPOUT_DWELL_SEC;
+        build_unicode_bar(dwell_norm, dwell_bar, sizeof(dwell_bar), 16);
+        const char *sub_ph = (ov->popout_elapsed < POPOUT_EXPLODE_SEC) ? "4A EXPLODE" : "4B DRIFT";
+        fprintf(fp, "  Pop-Out Menu : " ANSI_YELLOW "%-10s" ANSI_RESET
+                    " | B0:[%5.1f..%5.1f] B1:[%5.1f..%5.1f] | Dwell(B%d): %s\033[K\n",
+                sub_ph,
+                ov->band_r_in[0], ov->band_r_out[0],
+                ov->band_r_in[1], ov->band_r_out[1],
+                ov->dwell_band, dwell_bar);
+    } else {
+        fprintf(fp, "  Pop-Out Menu : " ANSI_DIM "IDLE" ANSI_RESET
+                    "       | Commits -> Band0(Grayscale): %u | Band1(Screenshot): %u\033[K\n",
+                dg->option_commit_count[0], dg->option_commit_count[1]);
+    }
     fprintf(fp, "\033[K\n");
 
     fprintf(fp, ANSI_BOLD "[Recent Events]" ANSI_RESET "\033[K\n");
@@ -342,7 +381,7 @@ void telemetry_record_frame(TelemetryState *ts,
             event_occurred = true;
         } else if (dg->in_reel_zone != ts->prev_in_reel_zone) {
             telemetry_log_event(ts, elapsed_sec,
-                                "REEL  : %s ZONE_REEL (d=%.1f px) at (%d, %d)",
+                                "REEL  : %s REELING_ZONE (d=%.1f px) at (%d, %d)",
                                 dg->in_reel_zone ? "Entered" : "Exited",
                                 dg->d, raw_x, raw_y);
             ts->prev_in_reel_zone = dg->in_reel_zone;
@@ -372,6 +411,17 @@ void telemetry_record_frame(TelemetryState *ts,
         telemetry_log_event(ts, elapsed_sec,
                             "EVENT : Singularity #%u triggered! (u >= 1.00)",
                             dg->singularity_count);
+        event_occurred = true;
+    }
+
+    if (dg->popout_expired) {
+        telemetry_log_event(ts, elapsed_sec,
+                            "POPOUT: Annuli reached R_horizon (%.1f px) -> expired",
+                            ov->r_horizon);
+        event_occurred = true;
+    }
+
+    if (dg->committed_option >= 0) {
         event_occurred = true;
     }
 
