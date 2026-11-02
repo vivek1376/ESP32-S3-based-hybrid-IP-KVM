@@ -43,8 +43,8 @@
 #define OVERLAY_PSI_EPSILON     625.0f                      // Low-speed noise squelch (25 px/s)^2
 #define OVERLAY_OMEGA_DEADBAND  0.35f                       // Min CCW angular speed to wind (rad/s)
 #define OVERLAY_K_IN            0.22f                       // CCW winding gain (1/rad)
-#define OVERLAY_GAMMA_OPEN      0.65f                       // Spring restoration rate (1/s)
-#define OVERLAY_BETA_STIFF      0.80f                       // Non-linear spring stiffening factor
+#define OVERLAY_GAMMA_OPEN      0.35f                       // Spring restoration rate (1/s)
+#define OVERLAY_BETA_STIFF      0.40f                       // Non-linear spring stiffening factor
 #define OVERLAY_K_CW            0.00f                       // Active CW unwind gain (0 = use spring only)
 
 // Pop-Out Concentric Annuli Parameters
