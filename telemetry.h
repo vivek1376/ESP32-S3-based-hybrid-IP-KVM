@@ -20,7 +20,7 @@
 
 // Flags bitmask in OverlayMetricRecord.flags
 #define METRIC_FLAG_IN_WINDOW       (1u << 0)
-#define METRIC_FLAG_IN_QUAD1        (1u << 1)
+#define METRIC_FLAG_IN_REEL_ZONE    (1u << 1)
 #define METRIC_FLAG_SINGULARITY     (1u << 2)
 #define METRIC_FLAG_KB_GRABBED      (1u << 3)
 
@@ -88,7 +88,7 @@ typedef struct {
     bool prev_valid;
     OverlayPhase prev_phase;
     bool prev_in_window;
-    bool prev_in_quad1;
+    bool prev_in_reel_zone;
     bool prev_kb_grabbed;
 
     // Rolling event log ring buffer

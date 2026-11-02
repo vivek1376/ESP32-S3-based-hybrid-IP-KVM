@@ -19,9 +19,10 @@
 #define OVERLAY_CENTER_X        1620.0f                     // Top-Right Quadrant X anchor (px)
 #define OVERLAY_CENTER_Y        260.0f                      // Top-Right Quadrant Y anchor (px)
 
-// Spatial Hysteresis (Strictly anchored to nominal OVERLAY_R0, never R_curr!)
-#define OVERLAY_ZONE_IN         (1.40f * OVERLAY_R0)        // 136.1 px entry threshold
-#define OVERLAY_ZONE_OUT        (1.50f * OVERLAY_R0)        // 145.8 px exit threshold (hysteresis)
+// Spatial Hysteresis & Reeling-In Zones (Strictly anchored to nominal OVERLAY_R0, never R_curr!)
+#define OVERLAY_ZONE_IN         (1.82f * OVERLAY_R0)        // 176.9 px entry threshold (+30% from 1.40*R0)
+#define OVERLAY_ZONE_OUT        (1.95f * OVERLAY_R0)        // 189.5 px exit threshold (+30% from 1.50*R0)
+#define OVERLAY_ZONE_REEL       (1.24f * OVERLAY_ZONE_OUT)  // 235.0 px reeling-in radius (+24% over ZONE_OUT)
 
 // Reeling-In Rotation Kinematics
 #define OVERLAY_BASE_SPEED      2.20f                       // CCW rotation speed (rad/s)
@@ -94,7 +95,7 @@ typedef struct {
     float du_dt;
     float r_curr;
     bool in_window;
-    bool in_quadrant_1;
+    bool in_reel_zone;
     bool singularity_triggered;
     uint32_t singularity_count;
 } OverlayDiagnostics;

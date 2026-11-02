@@ -8,8 +8,9 @@
 
   const POLL_INTERVAL_MS = 2000;
   const SLOW_FRAME_MS = 20.0;
-  const ZONE_IN_PX = 136.08;
-  const ZONE_OUT_PX = 145.80;
+  const ZONE_IN_PX = 176.90;
+  const ZONE_OUT_PX = 189.54;
+  const ZONE_REEL_PX = 235.03;
   const FLAG_SINGULARITY = 1 << 2;
 
   const GRID_COLOR = "#114554";
@@ -865,6 +866,7 @@
     [
       { px: ZONE_IN_PX, col: "rgba(244, 114, 182, 0.5)" },
       { px: ZONE_OUT_PX, col: "rgba(251, 191, 36, 0.4)" },
+      { px: ZONE_REEL_PX, col: "rgba(103, 232, 249, 0.42)" },
     ].forEach((z) => {
       const yz = toYd(z.px);
       ctx.save();

@@ -220,13 +220,11 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     if (dt < 0.001f) dt = 0.001f;
     if (dt > 0.100f) dt = 0.100f;
 
-    // Quadrant I check: top-right quadrant inside the active 1920x1080 KVM window.
-    // Leaving the window onto the host desktop treats pointer as outside Quadrant I.
+    // Window bounds check: leaving the 1920x1080 KVM window onto the host desktop
+    // transitions the overlay to OVERLAY_DORMANT and resets the 1-Euro filter.
     bool in_window = cursor_in_window &&
                      (raw_x >= 0 && raw_x < WIN_W &&
                       raw_y >= 0 && raw_y < WIN_H);
-    bool in_quadrant_1 = in_window &&
-                         (raw_x >= (WIN_W / 2) && raw_y <= (WIN_H / 2));
 
     // Section 3: Real-Time 2D 1-Euro Filter Update (Phase-Consistent C1 Kinematics)
     float x_hat = (float)raw_x;
@@ -280,15 +278,19 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
                 (v_theta_sq + OVERLAY_PSI_ALPHA * v_r_sq + OVERLAY_PSI_EPSILON);
 
     // Section 5: Phase Transitions (Strictly anchored to nominal OVERLAY_R0, never R_curr!)
+    // Reeling-in is gated by radial proximity OVERLAY_ZONE_REEL (+24% beyond OVERLAY_ZONE_OUT),
+    // clipped cleanly to the active KVM window bounds.
+    bool in_reel_zone = in_window && (d <= OVERLAY_ZONE_REEL);
+
     switch (ov->phase) {
         case OVERLAY_DORMANT:
-            if (in_quadrant_1) {
+            if (in_reel_zone) {
                 ov->phase = (d <= OVERLAY_ZONE_IN) ? OVERLAY_ENGAGEMENT : OVERLAY_REELING_IN;
             }
             break;
 
         case OVERLAY_REELING_IN:
-            if (!in_quadrant_1) {
+            if (!in_reel_zone) {
                 ov->phase = OVERLAY_DORMANT;
             } else if (d <= OVERLAY_ZONE_IN) {
                 ov->phase = OVERLAY_ENGAGEMENT;
@@ -300,12 +302,12 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
             if (!in_window) {
                 ov->phase = OVERLAY_DORMANT;
             } else if (d > OVERLAY_ZONE_OUT) {
-                ov->phase = in_quadrant_1 ? OVERLAY_REELING_IN : OVERLAY_DORMANT;
+                ov->phase = in_reel_zone ? OVERLAY_REELING_IN : OVERLAY_DORMANT;
             }
             break;
 
         default:
-            ov->phase = in_quadrant_1 ? OVERLAY_REELING_IN : OVERLAY_DORMANT;
+            ov->phase = in_reel_zone ? OVERLAY_REELING_IN : OVERLAY_DORMANT;
             break;
     }
 
@@ -399,7 +401,7 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     ov->diag.du_dt = du_dt;
     ov->diag.r_curr = r_curr;
     ov->diag.in_window = in_window;
-    ov->diag.in_quadrant_1 = in_quadrant_1;
+    ov->diag.in_reel_zone = in_reel_zone;
     ov->diag.singularity_triggered = singularity_triggered;
 }
 

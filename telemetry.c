@@ -201,14 +201,20 @@ static void render_tty_dashboard(TelemetryState *ts,
     build_unicode_bar(dg->psi, psi_bar, sizeof(psi_bar), 24);
     build_unicode_bar(ov->u, u_bar, sizeof(u_bar), 24);
 
-    const char *zone_tag = "OUTSIDE ZONE_OUT";
+    const char *zone_tag = "OUTSIDE ZONE_REEL";
     const char *zone_col = ANSI_DIM;
-    if (dg->d <= OVERLAY_ZONE_IN) {
+    if (!dg->in_window) {
+        zone_tag = "OUTSIDE WINDOW";
+        zone_col = ANSI_DIM;
+    } else if (dg->d <= OVERLAY_ZONE_IN) {
         zone_tag = "INSIDE ZONE_IN";
         zone_col = ANSI_MAGENTA;
     } else if (dg->d <= OVERLAY_ZONE_OUT) {
         zone_tag = "HYSTERESIS BAND";
         zone_col = ANSI_YELLOW;
+    } else if (dg->d <= OVERLAY_ZONE_REEL) {
+        zone_tag = "INSIDE ZONE_REEL";
+        zone_col = ANSI_CYAN;
     }
 
     float slow_pct = (ts->frame_idx > 0)
@@ -240,17 +246,17 @@ static void render_tty_dashboard(TelemetryState *ts,
     fprintf(fp, ANSI_BOLD "[State & Pointer]" ANSI_RESET "\033[K\n");
     fprintf(fp, "  Phase        : %s>> %-20s <<" ANSI_RESET "\033[K\n",
             phase_ansi_color(ov->phase), overlay_phase_name(ov->phase));
-    fprintf(fp, "  Spatial Gate : in_window=%s%-3s" ANSI_RESET " | in_quadrant_1=%s%-3s" ANSI_RESET "\033[K\n",
+    fprintf(fp, "  Spatial Gate : in_window=%s%-3s" ANSI_RESET " | in_reel_zone=%s%-3s" ANSI_RESET "\033[K\n",
             dg->in_window ? ANSI_GREEN : ANSI_DIM, dg->in_window ? "YES" : "NO",
-            dg->in_quadrant_1 ? ANSI_CYAN : ANSI_DIM, dg->in_quadrant_1 ? "YES" : "NO");
+            dg->in_reel_zone ? ANSI_CYAN : ANSI_DIM, dg->in_reel_zone ? "YES" : "NO");
     fprintf(fp, "  Pointer Pos  : raw=(%5d, %5d) px | 1-Euro=(%6.1f, %6.1f) px\033[K\n",
             raw_x, raw_y, dg->x_hat, dg->y_hat);
     fprintf(fp, "  Pointer Vel  : vx =%+8.1f px/s    | vy    =%+8.1f px/s\033[K\n",
             dg->vx_hat, dg->vy_hat);
     fprintf(fp, "\033[K\n");
 
-    fprintf(fp, ANSI_BOLD "[Polar Kinematics]" ANSI_RESET "  (Anchor: %.0f, %.0f | ZONE_IN: %.1f | ZONE_OUT: %.1f)\033[K\n",
-            OVERLAY_CENTER_X, OVERLAY_CENTER_Y, OVERLAY_ZONE_IN, OVERLAY_ZONE_OUT);
+    fprintf(fp, ANSI_BOLD "[Polar Kinematics]" ANSI_RESET "  (Anchor: %.0f, %.0f | IN: %.1f | OUT: %.1f | REEL: %.1f)\033[K\n",
+            OVERLAY_CENTER_X, OVERLAY_CENTER_Y, OVERLAY_ZONE_IN, OVERLAY_ZONE_OUT, OVERLAY_ZONE_REEL);
     fprintf(fp, "  Radius d     : %7.1f px (d_scaled: %5.1f px) %s[%s]" ANSI_RESET "\033[K\n",
             dg->d, dg->d_scaled, zone_col, zone_tag);
     fprintf(fp, "  Velocities   : v_theta=%+8.1f px/s (CCW+) | v_r=%+8.1f px/s\033[K\n",
@@ -317,7 +323,7 @@ void telemetry_record_frame(TelemetryState *ts,
     if (!ts->prev_valid) {
         ts->prev_phase = ov->phase;
         ts->prev_in_window = dg->in_window;
-        ts->prev_in_quad1 = dg->in_quadrant_1;
+        ts->prev_in_reel_zone = dg->in_reel_zone;
         ts->prev_kb_grabbed = kb_grabbed;
         ts->prev_valid = true;
         event_occurred = true;
@@ -332,13 +338,14 @@ void telemetry_record_frame(TelemetryState *ts,
                                     "WINDOW: Pointer left KVM window -> host desktop");
             }
             ts->prev_in_window = dg->in_window;
+            ts->prev_in_reel_zone = dg->in_reel_zone;
             event_occurred = true;
-        } else if (dg->in_quadrant_1 != ts->prev_in_quad1) {
+        } else if (dg->in_reel_zone != ts->prev_in_reel_zone) {
             telemetry_log_event(ts, elapsed_sec,
-                                "QUAD1 : %s Quadrant I at (%d, %d)",
-                                dg->in_quadrant_1 ? "Entered" : "Exited",
-                                raw_x, raw_y);
-            ts->prev_in_quad1 = dg->in_quadrant_1;
+                                "REEL  : %s ZONE_REEL (d=%.1f px) at (%d, %d)",
+                                dg->in_reel_zone ? "Entered" : "Exited",
+                                dg->d, raw_x, raw_y);
+            ts->prev_in_reel_zone = dg->in_reel_zone;
             event_occurred = true;
         }
 
@@ -374,7 +381,7 @@ void telemetry_record_frame(TelemetryState *ts,
     if (ts->bin_fp) {
         uint8_t flags = 0;
         if (dg->in_window)             flags |= METRIC_FLAG_IN_WINDOW;
-        if (dg->in_quadrant_1)         flags |= METRIC_FLAG_IN_QUAD1;
+        if (dg->in_reel_zone)          flags |= METRIC_FLAG_IN_REEL_ZONE;
         if (dg->singularity_triggered) flags |= METRIC_FLAG_SINGULARITY;
         if (kb_grabbed)                flags |= METRIC_FLAG_KB_GRABBED;
 
