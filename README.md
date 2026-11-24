@@ -119,6 +119,12 @@ Connect the target computer's HDMI output to your capture card (`/dev/video0`) a
 ./kvm_client 192.168.1.150 /dev/video0
 ```
 
+Run metrics viz webapp
+
+```bash
+python metrics_viz/app.py
+```
+
 ### Controls
 * **Mouse Movement:** Move your cursor freely across the `1920x1080` window—no locking or capture key needed.
 * **Engage Keyboard Grab:** Click anywhere inside the KVM window. All keyboard combinations (including `Alt+Tab` and `Super`) are now sent exclusively to the remote computer.

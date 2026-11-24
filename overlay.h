@@ -19,10 +19,15 @@
 #define OVERLAY_CENTER_X        1620.0f                     // Top-Right Quadrant X anchor (px)
 #define OVERLAY_CENTER_Y        260.0f                      // Top-Right Quadrant Y anchor (px)
 
-// Spatial Hysteresis & Reeling-In Zones (Strictly anchored to nominal OVERLAY_R0, never R_curr!)
-#define OVERLAY_ENGAGEMENT_ZONE_IN   (1.82f * OVERLAY_R0)                  // 176.9 px entry threshold (+30% from 1.40*R0)
-#define OVERLAY_ENGAGEMENT_ZONE_OUT  (1.95f * OVERLAY_R0)                  // 189.5 px exit threshold (+30% from 1.50*R0)
-#define OVERLAY_REELING_ZONE         (1.24f * OVERLAY_ENGAGEMENT_ZONE_OUT) // 235.0 px reeling-in radius (+24% over ZONE_OUT)
+// Square Spatial Hysteresis & Reeling-In Zones centered at (OVERLAY_CENTER_X, OVERLAY_CENTER_Y)
+// Half-side ("Chebyshev radius" max(|dx|, |dy|)) anchored to max(dist_to_top, dist_to_right) = 300.0 px,
+// clipped cleanly to the [0, WIN_W) x [0, WIN_H) window bounds.
+#define OVERLAY_DIST_TO_TOP          (OVERLAY_CENTER_Y)
+#define OVERLAY_DIST_TO_RIGHT        ((float)WIN_W - OVERLAY_CENTER_X)
+#define OVERLAY_MAX_EDGE_DIST        ((OVERLAY_DIST_TO_TOP > OVERLAY_DIST_TO_RIGHT) ? OVERLAY_DIST_TO_TOP : OVERLAY_DIST_TO_RIGHT)
+#define OVERLAY_ENGAGEMENT_ZONE_IN   (OVERLAY_MAX_EDGE_DIST)                    // 300.0 px square half-side (600x600, clipped)
+#define OVERLAY_ENGAGEMENT_ZONE_OUT  (1.16f * OVERLAY_ENGAGEMENT_ZONE_IN)       // 348.0 px square half-side (+16%, clipped)
+#define OVERLAY_REELING_ZONE         (1.16f * OVERLAY_ENGAGEMENT_ZONE_OUT)      // 403.7 px square half-side (+16%, clipped)
 
 // Reeling-In Rotation Kinematics
 #define OVERLAY_BASE_SPEED      2.20f                       // CCW rotation speed (rad/s)
@@ -51,9 +56,9 @@
 #define MENU_OPTION_COUNT       2                           // 0: Grayscale Toggle, 1: Save Screenshot
 #define POPOUT_EXPLODE_SEC      0.18f                       // 180 ms initial ballistic explosion
 #define POPOUT_DWELL_SEC        0.32f                       // 320 ms hover dwell to commit action
-#define POPOUT_BAND_WIDTH       52.0f                       // Radial thickness of each annulus (px)
+#define POPOUT_BAND_WIDTH       86.32f                      // Radial thickness of each annulus (+66% from 52.0 px)
 #define POPOUT_BAND_GAP         20.0f                       // Radial gap between annuli (px)
-#define POPOUT_START_INNER_R    190.0f                      // Band 0 inner radius after explosion (px), outside ENGAGEMENT_ZONE_OUT
+#define POPOUT_START_INNER_R    860.0f                      // Band 0 inner radius after explosion (px), in Bottom-Left Quadrant
 #define POPOUT_DRIFT_SPEED      45.0f                       // Outward slow drift speed (px/s)
 #define POPOUT_BL_MARGIN_RATIO  0.16f                       // 16% of viewport diagonal off bottom-left
 #define POPOUT_ANNULUS_SEGMENTS 90                          // Angular quad subdivisions across 2*pi
@@ -86,6 +91,7 @@ typedef struct {
     float vx_hat;
     float vy_hat;
     float d;
+    float d_zone;             // Chebyshev square distance max(|dx|, |dy|) from anchor
     float d_scaled;
     float v_theta;
     float v_r;

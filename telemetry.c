@@ -228,13 +228,13 @@ static void render_tty_dashboard(TelemetryState *ts,
     if (!dg->in_window) {
         zone_tag = "OUTSIDE WINDOW";
         zone_col = ANSI_DIM;
-    } else if (dg->d <= OVERLAY_ENGAGEMENT_ZONE_IN) {
+    } else if (dg->d_zone <= OVERLAY_ENGAGEMENT_ZONE_IN) {
         zone_tag = "ENGAGEMENT_ZONE_IN";
         zone_col = ANSI_MAGENTA;
-    } else if (dg->d <= OVERLAY_ENGAGEMENT_ZONE_OUT) {
+    } else if (dg->d_zone <= OVERLAY_ENGAGEMENT_ZONE_OUT) {
         zone_tag = "HYSTERESIS BAND";
         zone_col = ANSI_YELLOW;
-    } else if (dg->d <= OVERLAY_REELING_ZONE) {
+    } else if (dg->d_zone <= OVERLAY_REELING_ZONE) {
         zone_tag = "REELING_ZONE";
         zone_col = ANSI_CYAN;
     }
@@ -277,11 +277,11 @@ static void render_tty_dashboard(TelemetryState *ts,
             dg->vx_hat, dg->vy_hat);
     fprintf(fp, "\033[K\n");
 
-    fprintf(fp, ANSI_BOLD "[Polar Kinematics]" ANSI_RESET "  (Anchor: %.0f, %.0f | ENG_IN: %.1f | ENG_OUT: %.1f | REEL: %.1f)\033[K\n",
+    fprintf(fp, ANSI_BOLD "[Polar Kinematics]" ANSI_RESET "  (Anchor: %.0f, %.0f | Box Half-Side IN: %.0f | OUT: %.0f | REEL: %.1f)\033[K\n",
             OVERLAY_CENTER_X, OVERLAY_CENTER_Y,
             OVERLAY_ENGAGEMENT_ZONE_IN, OVERLAY_ENGAGEMENT_ZONE_OUT, OVERLAY_REELING_ZONE);
-    fprintf(fp, "  Radius d     : %7.1f px (d_scaled: %5.1f px) %s[%s]" ANSI_RESET "\033[K\n",
-            dg->d, dg->d_scaled, zone_col, zone_tag);
+    fprintf(fp, "  Radius d     : %6.1f px (d_box: %5.1f | d_scaled: %5.1f) %s[%s]" ANSI_RESET "\033[K\n",
+            dg->d, dg->d_zone, dg->d_scaled, zone_col, zone_tag);
     fprintf(fp, "  Velocities   : v_theta=%+8.1f px/s (CCW+) | v_r=%+8.1f px/s\033[K\n",
             dg->v_theta, dg->v_r);
     fprintf(fp, "  omega_ptr    : %+7.2f rad/s (deadband: %.2f rad/s)\033[K\n",
@@ -381,19 +381,19 @@ void telemetry_record_frame(TelemetryState *ts,
             event_occurred = true;
         } else if (dg->in_reel_zone != ts->prev_in_reel_zone) {
             telemetry_log_event(ts, elapsed_sec,
-                                "REEL  : %s REELING_ZONE (d=%.1f px) at (%d, %d)",
+                                "REEL  : %s REELING_ZONE (d_box=%.1f px) at (%d, %d)",
                                 dg->in_reel_zone ? "Entered" : "Exited",
-                                dg->d, raw_x, raw_y);
+                                dg->d_zone, raw_x, raw_y);
             ts->prev_in_reel_zone = dg->in_reel_zone;
             event_occurred = true;
         }
 
         if (ov->phase != ts->prev_phase) {
             telemetry_log_event(ts, elapsed_sec,
-                                "PHASE : %s -> %s (d=%.1f px, u=%.2f)",
+                                "PHASE : %s -> %s (d=%.1f, d_box=%.1f, u=%.2f)",
                                 overlay_phase_name(ts->prev_phase),
                                 overlay_phase_name(ov->phase),
-                                dg->d, ov->u);
+                                dg->d, dg->d_zone, ov->u);
             ts->prev_phase = ov->phase;
             event_occurred = true;
         }

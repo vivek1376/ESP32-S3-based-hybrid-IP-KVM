@@ -320,12 +320,13 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     trail_update(&ov->filt_trail, x_hat, y_hat, in_window, dt);
 
     // Section 4: First-Order Polar Kinematics (Screen Coordinates: +x Right, +y Down)
-    // Keep true Euclidean distance d for physical screen hit-zones (ENGAGEMENT_ZONE_IN / OUT),
-    // and compute all polar kinematics from isotropic radially sqrt-scaled (dx_scaled, dy_scaled)
-    // so radial distance scales sub-linearly as sqrt(d * R_ref) without angular distortion.
-    float dx = x_hat - OVERLAY_CENTER_X;
-    float dy = y_hat - OVERLAY_CENTER_Y;
-    float d  = hypotf(dx, dy);
+    // Compute Euclidean distance d (for pop-out circular annuli), Chebyshev square distance
+    // d_zone = max(|dx|, |dy|) (for square ENGAGEMENT_ZONE_IN / OUT & REELING_ZONE),
+    // and isotropic radially sqrt-scaled (dx_scaled, dy_scaled) for polar kinematics.
+    float dx     = x_hat - OVERLAY_CENTER_X;
+    float dy     = y_hat - OVERLAY_CENTER_Y;
+    float d      = hypotf(dx, dy);
+    float d_zone = fmaxf(fabsf(dx), fabsf(dy));
 
     float dx_mid    = x_mid - OVERLAY_CENTER_X;
     float dy_mid    = y_mid - OVERLAY_CENTER_Y;
@@ -347,31 +348,29 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     float psi = v_theta_sq /
                 (v_theta_sq + OVERLAY_PSI_ALPHA * v_r_sq + OVERLAY_PSI_EPSILON);
 
-    // Section 5: Phase Transitions (Strictly anchored to nominal OVERLAY_R0, never R_curr!)
-    // Reeling-in is gated by radial proximity OVERLAY_REELING_ZONE (+24% beyond OVERLAY_ENGAGEMENT_ZONE_OUT),
-    // clipped cleanly to the active KVM window bounds.
-    bool in_reel_zone = in_window && (d <= OVERLAY_REELING_ZONE);
+    // Section 5: Phase Transitions (Square zones centered at OVERLAY_CENTER_X/Y, clipped to window)
+    bool in_reel_zone = in_window && (d_zone <= OVERLAY_REELING_ZONE);
 
     switch (ov->phase) {
         case OVERLAY_DORMANT:
             if (in_reel_zone) {
-                ov->phase = (d <= OVERLAY_ENGAGEMENT_ZONE_IN) ? OVERLAY_ENGAGEMENT : OVERLAY_REELING_IN;
+                ov->phase = (d_zone <= OVERLAY_ENGAGEMENT_ZONE_IN) ? OVERLAY_ENGAGEMENT : OVERLAY_REELING_IN;
             }
             break;
 
         case OVERLAY_REELING_IN:
             if (!in_reel_zone) {
                 ov->phase = OVERLAY_DORMANT;
-            } else if (d <= OVERLAY_ENGAGEMENT_ZONE_IN) {
+            } else if (d_zone <= OVERLAY_ENGAGEMENT_ZONE_IN) {
                 ov->phase = OVERLAY_ENGAGEMENT;
             }
             break;
 
         case OVERLAY_ENGAGEMENT:
-            // Hysteresis retention while inside window and d <= OVERLAY_ENGAGEMENT_ZONE_OUT
+            // Hysteresis retention while inside window and d_zone <= OVERLAY_ENGAGEMENT_ZONE_OUT
             if (!in_window) {
                 ov->phase = OVERLAY_DORMANT;
-            } else if (d > OVERLAY_ENGAGEMENT_ZONE_OUT) {
+            } else if (d_zone > OVERLAY_ENGAGEMENT_ZONE_OUT) {
                 ov->phase = in_reel_zone ? OVERLAY_REELING_IN : OVERLAY_DORMANT;
             }
             break;
@@ -528,7 +527,7 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
                     ov->dwell_timer = 0.0f;
                     ov->popout_elapsed = 0.0f;
                     if (in_reel_zone) {
-                        ov->phase = (d <= OVERLAY_ENGAGEMENT_ZONE_IN)
+                        ov->phase = (d_zone <= OVERLAY_ENGAGEMENT_ZONE_IN)
                                         ? OVERLAY_ENGAGEMENT
                                         : OVERLAY_REELING_IN;
                     } else {
@@ -558,6 +557,7 @@ void overlay_update(OverlayState *ov, int raw_x, int raw_y, bool cursor_in_windo
     ov->diag.vx_hat = vx_hat;
     ov->diag.vy_hat = vy_hat;
     ov->diag.d = d;
+    ov->diag.d_zone = d_zone;
     ov->diag.d_scaled = d_scaled;
     ov->diag.v_theta = v_theta;
     ov->diag.v_r = v_r;

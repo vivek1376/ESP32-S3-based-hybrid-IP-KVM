@@ -8,9 +8,9 @@
 
   const POLL_INTERVAL_MS = 2000;
   const SLOW_FRAME_MS = 20.0;
-  const ZONE_IN_PX = 176.90;
-  const ZONE_OUT_PX = 189.54;
-  const ZONE_REEL_PX = 235.03;
+  const ZONE_IN_PX = 300.0;
+  const ZONE_OUT_PX = 348.0;
+  const ZONE_REEL_PX = 403.68;
   const FLAG_SINGULARITY = 1 << 2;
 
   const GRID_COLOR = "#114554";
